@@ -1,20 +1,33 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 
 
 class InvoiceStatus(str, Enum):
-    UPLOADED = "已上传"      # File uploaded, waiting for OCR processing
-    PROCESSING = "解析中"    # OCR/LLM processing in progress
-    PENDING = "待处理"       # Processing complete, no conflicts
-    REVIEWING = "待审核"     # Has conflicts or missing fields, needs manual review
-    CONFIRMED = "已确认"     # Manually reviewed and confirmed
-    REIMBURSED = "已报销"    # Reimbursement completed
-    NOT_REIMBURSED = "未报销" # Not yet reimbursed
+    UPLOADED = "已上传"  # File uploaded, waiting for OCR processing
+    PROCESSING = "解析中"  # OCR/LLM processing in progress
+    PENDING = "待处理"  # Processing complete, no conflicts
+    REVIEWING = "待审核"  # Has conflicts or missing fields, needs manual review
+    CONFIRMED = "已确认"  # Manually reviewed and confirmed
+    REIMBURSED = "已报销"  # Reimbursement completed
+    NOT_REIMBURSED = "未报销"  # Not yet reimbursed
 
 
+# 🚨 1. 新增：专门用于解析 JSONB 中每一行商品明细的 Schema
+class InvoiceItemSchema(BaseModel):
+    item_name: Optional[str] = Field(None, description="项目名称")
+    specification: Optional[str] = Field(None, description="规格型号")
+    unit: Optional[str] = Field(None, description="单位")
+    quantity: Optional[str] = Field(None, description="数量")
+    unit_price: Optional[str] = Field(None, description="单价")
+    amount: Optional[str] = Field(None, description="金额(不含税)")
+    tax_rate: Optional[str] = Field(None, description="税率")
+    tax_amount: Optional[str] = Field(None, description="税额")
+
+
+# 🚨 2. 改造基础模型：删除单行商品字段，加入 items 数组
 class InvoiceBase(BaseModel):
     invoice_number: Optional[str] = Field(None, description="发票号码")
     issue_date: Optional[date] = Field(None, description="开票日期")
@@ -22,15 +35,13 @@ class InvoiceBase(BaseModel):
     buyer_tax_id: Optional[str] = Field(None, description="购买方纳税人识别号")
     seller_name: Optional[str] = Field(None, description="销售方名称")
     seller_tax_id: Optional[str] = Field(None, description="销售方纳税人识别号")
-    item_name: Optional[str] = Field(None, description="项目名称")
-    total_with_tax: Optional[Decimal] = Field(None, description="价税合计金额")
-    specification: Optional[str] = Field(None, description="规格型号")
-    unit: Optional[str] = Field(None, description="单位")
-    quantity: Optional[Decimal] = Field(None, description="数量")
-    unit_price: Optional[Decimal] = Field(None, description="单价")
-    amount: Optional[Decimal] = Field(None, description="金额")
-    tax_rate: Optional[str] = Field(None, description="税率")
-    tax_amount: Optional[Decimal] = Field(None, description="税额")
+    total_with_tax: Optional[Decimal] = Field(None, description="价税合计金额(全局)")
+    amount: Optional[Decimal] = Field(None, description="总金额(不含税, 全局)")
+    tax_rate: Optional[str] = Field(None, description="税率(全局)")
+    tax_amount: Optional[Decimal] = Field(None, description="总税额(全局)")
+
+    # 🚨 新增：支持多行商品明细的数组
+    items: Optional[List[InvoiceItemSchema]] = Field(default=[], description="发票明细列表")
 
 
 class InvoiceCreate(InvoiceBase):
@@ -72,12 +83,7 @@ class OcrResultResponse(BaseModel):
     buyer_tax_id: Optional[str] = None
     seller_name: Optional[str] = None
     seller_tax_id: Optional[str] = None
-    item_name: Optional[str] = None
     total_with_tax: Optional[str] = None
-    specification: Optional[str] = None
-    unit: Optional[str] = None
-    quantity: Optional[str] = None
-    unit_price: Optional[str] = None
     amount: Optional[str] = None
     tax_rate: Optional[str] = None
     tax_amount: Optional[str] = None
@@ -96,15 +102,14 @@ class LlmResultResponse(BaseModel):
     buyer_tax_id: Optional[str] = None
     seller_name: Optional[str] = None
     seller_tax_id: Optional[str] = None
-    item_name: Optional[str] = None
     total_with_tax: Optional[str] = None
-    specification: Optional[str] = None
-    unit: Optional[str] = None
-    quantity: Optional[str] = None
-    unit_price: Optional[str] = None
     amount: Optional[str] = None
     tax_rate: Optional[str] = None
     tax_amount: Optional[str] = None
+
+    # 🚨 LLM 结果也需要带上解析出的 items 数组
+    items: Optional[List[InvoiceItemSchema]] = []
+
     created_at: datetime
 
     class Config:

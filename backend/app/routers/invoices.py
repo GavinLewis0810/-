@@ -51,10 +51,10 @@ def _parse_date_param(value: Optional[str], field_name: str) -> Optional[date]:
 @router.post("/upload", response_model=List[UploadResponse])
 @limiter.limit("10/minute")
 async def upload_invoices(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    files: List[UploadFile] = File(...),
-    db: AsyncSession = Depends(get_db)
+        request: Request,
+        background_tasks: BackgroundTasks,
+        files: List[UploadFile] = File(...),
+        db: AsyncSession = Depends(get_db)
 ):
     """上传发票文件 (支持多文件)，上传后异步触发OCR解析"""
     results = []
@@ -126,17 +126,7 @@ async def upload_invoices(
 
 
 async def process_invoice_background(invoice_id: int, max_retries: int = 3):
-    """Background task to process an invoice with OCR/LLM.
-
-    Implements exponential backoff retry logic for transient failures.
-    Total attempts = 1 (initial) + max_retries, with delays of 2, 4, 8 seconds
-    between retries.
-
-    Args:
-        invoice_id: ID of the invoice to process
-        max_retries: Maximum number of retries after the initial attempt (default: 3,
-            resulting in up to 4 total attempts)
-    """
+    """Background task to process an invoice with OCR/LLM."""
     from app.services.invoice_service import process_invoice as do_process
     from app.database import async_session_maker
     from app.services.audit_service import log_audit
@@ -221,13 +211,13 @@ async def process_invoice_background(invoice_id: int, max_retries: int = 3):
 
 @router.get("", response_model=InvoiceListResponse)
 async def list_invoices(
-    page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
-    status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
-    owner: Optional[str] = Query(None, description="归属人筛选"),
-    start_date: Optional[str] = Query(None, description="开始日期"),
-    end_date: Optional[str] = Query(None, description="结束日期"),
-    db: AsyncSession = Depends(get_db)
+        page: int = Query(1, ge=1, description="页码"),
+        page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+        status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
+        owner: Optional[str] = Query(None, description="归属人筛选"),
+        start_date: Optional[str] = Query(None, description="开始日期"),
+        end_date: Optional[str] = Query(None, description="结束日期"),
+        db: AsyncSession = Depends(get_db)
 ):
     """获取发票列表"""
     query = select(Invoice)
@@ -271,10 +261,10 @@ async def list_invoices(
 
 @router.get("/statistics", response_model=StatisticsResponse)
 async def get_statistics(
-    invoice_ids: Optional[str] = Query(None, description="发票ID列表，逗号分隔"),
-    status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
-    owner: Optional[str] = Query(None, description="归属人筛选"),
-    db: AsyncSession = Depends(get_db)
+        invoice_ids: Optional[str] = Query(None, description="发票ID列表，逗号分隔"),
+        status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
+        owner: Optional[str] = Query(None, description="归属人筛选"),
+        db: AsyncSession = Depends(get_db)
 ):
     """获取发票统计数据"""
     query = select(Invoice)
@@ -305,8 +295,8 @@ async def get_statistics(
 
 @router.get("/{invoice_id}", response_model=InvoiceDetailResponse)
 async def get_invoice(
-    invoice_id: int,
-    db: AsyncSession = Depends(get_db)
+        invoice_id: int,
+        db: AsyncSession = Depends(get_db)
 ):
     """获取发票详情"""
     query = select(Invoice).where(Invoice.id == invoice_id)
@@ -329,7 +319,7 @@ async def get_invoice(
     diff_result = await db.execute(diff_query)
     diffs = diff_result.scalars().all()
 
-    # Build response dict from invoice to avoid lazy loading issues
+    # 🚨 终极修复：删除了原来那些散落的商品字段，加入了 items 数组
     invoice_dict = {
         "id": invoice.id,
         "file_name": invoice.file_name,
@@ -342,15 +332,11 @@ async def get_invoice(
         "buyer_tax_id": invoice.buyer_tax_id,
         "seller_name": invoice.seller_name,
         "seller_tax_id": invoice.seller_tax_id,
-        "item_name": invoice.item_name,
         "total_with_tax": invoice.total_with_tax,
-        "specification": invoice.specification,
-        "unit": invoice.unit,
-        "quantity": invoice.quantity,
-        "unit_price": invoice.unit_price,
         "amount": invoice.amount,
         "tax_rate": invoice.tax_rate,
         "tax_amount": invoice.tax_amount,
+        "items": invoice.items,  # 将 PostgreSQL 中的 JSONB 直接输出为数组
         "created_at": invoice.created_at,
         "updated_at": invoice.updated_at,
         "ocr_result": ocr,
@@ -363,8 +349,8 @@ async def get_invoice(
 
 @router.get("/{invoice_id}/file")
 async def get_invoice_file(
-    invoice_id: int,
-    db: AsyncSession = Depends(get_db)
+        invoice_id: int,
+        db: AsyncSession = Depends(get_db)
 ):
     """获取发票原始文件"""
     from fastapi.responses import Response
@@ -396,10 +382,10 @@ async def get_invoice_file(
 
 @router.put("/{invoice_id}", response_model=InvoiceResponse)
 async def update_invoice(
-    invoice_id: int,
-    update_data: InvoiceUpdate,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+        invoice_id: int,
+        update_data: InvoiceUpdate,
+        request: Request,
+        db: AsyncSession = Depends(get_db)
 ):
     """更新发票信息"""
     query = select(Invoice).where(Invoice.id == invoice_id)
@@ -408,6 +394,22 @@ async def update_invoice(
 
     if not invoice:
         raise HTTPException(status_code=404, detail="发票不存在")
+
+    # 查重逻辑
+    if update_data.invoice_number:
+        duplicate_query = select(Invoice).where(
+            Invoice.invoice_number == update_data.invoice_number,
+            Invoice.id != invoice_id,
+            Invoice.status.in_([InvoiceStatus.CONFIRMED, InvoiceStatus.REIMBURSED])
+        )
+        duplicate_result = await db.execute(duplicate_query)
+        duplicate_invoice = duplicate_result.scalar_one_or_none()
+
+        if duplicate_invoice:
+            raise HTTPException(
+                status_code=400,
+                detail=f"保存失败！系统内已存在发票号为【{update_data.invoice_number}】的记录，请勿重复录入。"
+            )
 
     # Capture old values for audit
     update_dict = update_data.model_dump(exclude_unset=True)
@@ -455,9 +457,9 @@ async def update_invoice(
 @router.post("/batch-update")
 @limiter.limit("30/minute")
 async def batch_update_invoices(
-    request: Request,
-    batch_request: BatchUpdateRequest,
-    db: AsyncSession = Depends(get_db)
+        request: Request,
+        batch_request: BatchUpdateRequest,
+        db: AsyncSession = Depends(get_db)
 ):
     """批量更新发票状态/归属人"""
     query = select(Invoice).where(Invoice.id.in_(batch_request.invoice_ids))
@@ -502,9 +504,9 @@ async def batch_update_invoices(
 @router.post("/batch-delete")
 @limiter.limit("20/minute")
 async def batch_delete_invoices(
-    request: Request,
-    batch_request: BatchDeleteRequest,
-    db: AsyncSession = Depends(get_db)
+        request: Request,
+        batch_request: BatchDeleteRequest,
+        db: AsyncSession = Depends(get_db)
 ):
     """批量删除发票及其关联数据"""
     if not batch_request.invoice_ids:
@@ -545,10 +547,10 @@ async def batch_delete_invoices(
 @router.post("/batch-reprocess")
 @limiter.limit("5/minute")
 async def batch_reprocess_invoices(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    batch_request: BatchDeleteRequest,  # Reuse for invoice_ids
-    db: AsyncSession = Depends(get_db)
+        request: Request,
+        background_tasks: BackgroundTasks,
+        batch_request: BatchDeleteRequest,  # Reuse for invoice_ids
+        db: AsyncSession = Depends(get_db)
 ):
     """批量重新解析发票（清除旧的OCR/LLM结果，重新处理）"""
     import logging
@@ -585,18 +587,18 @@ async def batch_reprocess_invoices(
         for diff in diff_result.scalars().all():
             await db.delete(diff)
 
-        # Reset invoice fields
+        # 🚨 修复重新解析时，清空新的字段
         invoice.invoice_number = None
         invoice.issue_date = None
         invoice.buyer_name = None
         invoice.buyer_tax_id = None
         invoice.seller_name = None
         invoice.seller_tax_id = None
-        invoice.item_name = None
         invoice.total_with_tax = None
         invoice.amount = None
         invoice.tax_amount = None
         invoice.tax_rate = None
+        invoice.items = None  # 核心：清空旧的 JSONB 数组
         invoice.status = InvoiceStatus.UPLOADED
 
     await db.commit()
@@ -614,8 +616,8 @@ async def batch_reprocess_invoices(
 
 @router.post("/{invoice_id}/process")
 async def process_invoice(
-    invoice_id: int,
-    db: AsyncSession = Depends(get_db)
+        invoice_id: int,
+        db: AsyncSession = Depends(get_db)
 ):
     """处理发票：运行OCR解析"""
     from app.services.invoice_service import process_invoice as do_process
@@ -637,9 +639,9 @@ async def process_invoice(
 
 @router.delete("/{invoice_id}")
 async def delete_invoice(
-    invoice_id: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+        invoice_id: int,
+        request: Request,
+        db: AsyncSession = Depends(get_db)
 ):
     """删除发票"""
     query = select(Invoice).where(Invoice.id == invoice_id)
@@ -669,11 +671,11 @@ async def delete_invoice(
 
 @router.post("/{invoice_id}/diffs/{diff_id}/resolve")
 async def resolve_diff(
-    invoice_id: int,
-    diff_id: int,
-    resolve_request: ResolveDiffRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+        invoice_id: int,
+        diff_id: int,
+        resolve_request: ResolveDiffRequest,
+        request: Request,
+        db: AsyncSession = Depends(get_db)
 ):
     """解决解析差异，选择OCR、LLM或自定义值"""
     from datetime import datetime
@@ -729,7 +731,8 @@ async def resolve_diff(
                 invoice.issue_date = datetime.strptime(final_value, '%Y-%m-%d').date()
             except ValueError:
                 pass
-        elif field_name in ['total_with_tax', 'amount', 'tax_amount', 'quantity', 'unit_price']:
+        # 🚨 修复：在比对逻辑中去掉了 quantity 和 unit_price
+        elif field_name in ['total_with_tax', 'amount', 'tax_amount']:
             try:
                 setattr(invoice, field_name, Dec(final_value))
             except (ValueError, TypeError):
@@ -744,7 +747,7 @@ async def resolve_diff(
 
     all_resolved = all(d.resolved == 1 for d in all_diffs)
     if all_resolved:
-        invoice.status = InvoiceStatus.CONFIRMED
+        invoice.status = InvoiceStatus.REVIEWING
 
     # Audit log for diff resolution
     client_info = get_client_info(request)
@@ -777,9 +780,9 @@ async def resolve_diff(
 
 @router.post("/{invoice_id}/confirm")
 async def confirm_invoice(
-    invoice_id: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
+        invoice_id: int,
+        request: Request,
+        db: AsyncSession = Depends(get_db)
 ):
     """确认发票，标记所有差异为已解决。"""
     # Get invoice
@@ -790,15 +793,28 @@ async def confirm_invoice(
     if not invoice:
         raise HTTPException(status_code=404, detail="发票不存在")
 
+    if invoice.invoice_number:
+        duplicate_query = select(Invoice).where(
+            Invoice.invoice_number == invoice.invoice_number,
+            Invoice.id != invoice_id,
+            Invoice.status.in_([InvoiceStatus.CONFIRMED, InvoiceStatus.REIMBURSED])
+        )
+        duplicate_result = await db.execute(duplicate_query)
+        duplicate_invoice = duplicate_result.scalar_one_or_none()
+
+        if duplicate_invoice:
+            raise HTTPException(
+                status_code=400,
+                detail=f"确认失败！系统内已存在发票号为【{invoice.invoice_number}】的记录，请先删除当前重复文件。"
+            )
+
+    # 🚨 修复：从必填字段中移除了 item_name
     critical_fields = [
         "invoice_number",
         "issue_date",
         "total_with_tax",
         "buyer_name",
-        "buyer_tax_id",
         "seller_name",
-        "seller_tax_id",
-        "item_name",
     ]
     missing_fields = [field for field in critical_fields if not getattr(invoice, field)]
     if missing_fields:
@@ -827,7 +843,6 @@ async def confirm_invoice(
     # Mark all diffs as resolved
     for diff in diffs:
         if diff.resolved == 0:
-            # Use existing final_value or ocr_value as default
             if not diff.final_value:
                 diff.final_value = diff.ocr_value or diff.llm_value
             diff.resolved = 1
@@ -861,13 +876,13 @@ async def confirm_invoice(
 @router.get("/export/csv")
 @limiter.limit("10/minute")
 async def export_invoices_csv(
-    request: Request,
-    invoice_ids: Optional[str] = Query(None, description="发票ID列表，逗号分隔"),
-    status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
-    owner: Optional[str] = Query(None, description="归属人筛选"),
-    start_date: Optional[str] = Query(None, description="开始日期"),
-    end_date: Optional[str] = Query(None, description="结束日期"),
-    db: AsyncSession = Depends(get_db)
+        request: Request,
+        invoice_ids: Optional[str] = Query(None, description="发票ID列表，逗号分隔"),
+        status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
+        owner: Optional[str] = Query(None, description="归属人筛选"),
+        start_date: Optional[str] = Query(None, description="开始日期"),
+        end_date: Optional[str] = Query(None, description="结束日期"),
+        db: AsyncSession = Depends(get_db)
 ):
     """导出发票为CSV格式"""
     import csv
@@ -893,24 +908,23 @@ async def export_invoices_csv(
     result = await db.execute(query)
     invoices = result.scalars().all()
 
-    # Create CSV content
     output = BytesIO()
-    # Write BOM for Excel compatibility with Chinese characters
     output.write(b'\xef\xbb\xbf')
 
     import codecs
     writer = csv.writer(codecs.getwriter('utf-8')(output))
 
-    # Header row
     writer.writerow([
         '发票号码', '开票日期', '购买方名称', '购买方纳税人识别号',
-        '销售方名称', '销售方纳税人识别号', '项目名称',
+        '销售方名称', '销售方纳税人识别号', '包含商品明细',
         '金额', '税额', '价税合计', '税率',
         '状态', '归属人', '文件名', '创建时间'
     ])
 
-    # Data rows
     for inv in invoices:
+        # 🚨 提取 JSONB 数组中所有的 item_name 并拼接成字符串
+        item_names_str = ", ".join([str(i.get("item_name", "")) for i in inv.items if i.get("item_name")]) if inv.items else ""
+
         writer.writerow([
             inv.invoice_number or '',
             str(inv.issue_date) if inv.issue_date else '',
@@ -918,7 +932,7 @@ async def export_invoices_csv(
             inv.buyer_tax_id or '',
             inv.seller_name or '',
             inv.seller_tax_id or '',
-            inv.item_name or '',
+            item_names_str,  # 使用拼接后的名称
             str(inv.amount) if inv.amount else '',
             str(inv.tax_amount) if inv.tax_amount else '',
             str(inv.total_with_tax) if inv.total_with_tax else '',
@@ -944,13 +958,13 @@ async def export_invoices_csv(
 @router.get("/export/excel")
 @limiter.limit("10/minute")
 async def export_invoices_excel(
-    request: Request,
-    invoice_ids: Optional[str] = Query(None, description="发票ID列表，逗号分隔"),
-    status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
-    owner: Optional[str] = Query(None, description="归属人筛选"),
-    start_date: Optional[str] = Query(None, description="开始日期"),
-    end_date: Optional[str] = Query(None, description="结束日期"),
-    db: AsyncSession = Depends(get_db)
+        request: Request,
+        invoice_ids: Optional[str] = Query(None, description="发票ID列表，逗号分隔"),
+        status: Optional[InvoiceStatus] = Query(None, description="状态筛选"),
+        owner: Optional[str] = Query(None, description="归属人筛选"),
+        start_date: Optional[str] = Query(None, description="开始日期"),
+        end_date: Optional[str] = Query(None, description="结束日期"),
+        db: AsyncSession = Depends(get_db)
 ):
     """导出发票为Excel格式"""
     from urllib.parse import quote
@@ -981,15 +995,13 @@ async def export_invoices_excel(
     result = await db.execute(query)
     invoices = result.scalars().all()
 
-    # Create workbook
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "发票列表"
 
-    # Header row
     headers = [
         '发票号码', '开票日期', '购买方名称', '购买方纳税人识别号',
-        '销售方名称', '销售方纳税人识别号', '项目名称',
+        '销售方名称', '销售方纳税人识别号', '包含商品明细',
         '金额', '税额', '价税合计', '税率',
         '状态', '归属人', '文件名', '创建时间'
     ]
@@ -1008,8 +1020,10 @@ async def export_invoices_excel(
         cell.border = thin_border
         cell.alignment = Alignment(horizontal='center')
 
-    # Data rows
     for row, inv in enumerate(invoices, 2):
+        # 🚨 提取 JSONB 数组中所有的 item_name 并拼接成字符串
+        item_names_str = ", ".join([str(i.get("item_name", "")) for i in inv.items if i.get("item_name")]) if inv.items else ""
+
         data = [
             inv.invoice_number or '',
             str(inv.issue_date) if inv.issue_date else '',
@@ -1017,7 +1031,7 @@ async def export_invoices_excel(
             inv.buyer_tax_id or '',
             inv.seller_name or '',
             inv.seller_tax_id or '',
-            inv.item_name or '',
+            item_names_str, # 使用拼接后的名称
             float(inv.amount) if inv.amount else '',
             float(inv.tax_amount) if inv.tax_amount else '',
             float(inv.total_with_tax) if inv.total_with_tax else '',
@@ -1032,7 +1046,6 @@ async def export_invoices_excel(
             cell = ws.cell(row=row, column=col, value=value)
             cell.border = thin_border
 
-    # Auto-adjust column widths
     for col in ws.columns:
         max_length = 0
         column = col[0].column_letter

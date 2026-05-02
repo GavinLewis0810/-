@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models.reimbursement import Reimbursement, ReimbursementStatus
 from app.models.invoice import Invoice, InvoiceStatus
 from app.schemas.reimbursement import ReimbursementCreate, ReimbursementResponse, ReimbursementReview
-
+from app.services.reimbursement_service import delete_reimbursement_logic # 引入刚才写的服务
 router = APIRouter()
 
 
@@ -81,3 +81,16 @@ async def review_reimbursement(reimb_id: int, data: ReimbursementReview, db: Asy
     await db.commit()
     await db.refresh(reimb)
     return reimb
+
+
+@router.delete("/{reimb_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_reimbursement(reimb_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    路由层：接收前端的删除请求，呼叫 Service 处理逻辑
+    """
+    success = await delete_reimbursement_logic(reimb_id, db)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="报销单不存在")
+
+    return None

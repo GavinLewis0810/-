@@ -19,29 +19,26 @@ _ocr_executor = ThreadPoolExecutor(max_workers=settings.ocr_max_workers)
 _llm_executor = ThreadPoolExecutor(max_workers=settings.llm_max_workers)
 logger.info(f"Initialized thread pools: OCR={settings.ocr_max_workers}, LLM={settings.llm_max_workers}")
 
-# 【修复核心1】将四个新字段加入比对范围
+# 🚨 瘦身后的比对列表：彻底移除商品明细字段，只保留全票头主干信息
 COMPARABLE_FIELDS = [
     'invoice_number',
+    'invoice_code',
     'issue_date',
     'buyer_name',
     'buyer_tax_id',
     'seller_name',
     'seller_tax_id',
-    'item_name',
-    'specification',  # 新增：规格型号
-    'unit',           # 新增：单位
-    'quantity',       # 新增：数量
-    'unit_price',     # 新增：单价
     'total_with_tax',
     'amount',
-    'tax_amount',
-    'tax_rate',
+    'tax_amount'
 ]
 
 def _reset_extracted_fields(invoice: Invoice) -> None:
     """Reset extracted fields to avoid stale values on reprocess."""
     for field_name in COMPARABLE_FIELDS:
         setattr(invoice, field_name, None)
+    # 重新解析时，也清空旧的 items 数组
+    invoice.items = None
 
 def _run_ocr(file_data: bytes, file_type: str) -> Tuple[str, float, Dict[str, Any]]:
     ocr_service = get_ocr_service()
@@ -93,12 +90,14 @@ def _run_llm_vision(file_data: bytes, file_type: str) -> Dict[str, Any]:
 def _has_meaningful_fields(fields: Dict[str, Any]) -> bool:
     if not fields:
         return False
-    for value in fields.values():
+    for key, value in fields.items():
         if value is None:
             continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        return True
+        # 只要存在非空的 items 数组，或者非空的字符串，就认为是有意义的结果
+        if key == 'items' and isinstance(value, list) and len(value) > 0:
+            return True
+        if isinstance(value, str) and value.strip():
+            return True
     return False
 
 async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
@@ -134,7 +133,7 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
         logger.info(f"OCR completed: {len(ocr_fields)} fields extracted")
         logger.info(f"LLM vision completed: {len(llm_fields)} fields extracted (has_llm={has_llm})")
 
-        # 【修复核心2】在保存 OCR 结果时加入新字段
+        # 🚨 OCR 不提取商品明细，所以全部剔除 item_name 等字段
         ocr_result = OcrResult(
             invoice_id=invoice_id,
             raw_text=raw_text,
@@ -144,11 +143,6 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
             buyer_tax_id=ocr_fields.get('buyer_tax_id'),
             seller_name=ocr_fields.get('seller_name'),
             seller_tax_id=ocr_fields.get('seller_tax_id'),
-            item_name=ocr_fields.get('item_name'),
-            specification=ocr_fields.get('specification'),
-            unit=ocr_fields.get('unit'),
-            quantity=ocr_fields.get('quantity'),
-            unit_price=ocr_fields.get('unit_price'),
             total_with_tax=ocr_fields.get('total_with_tax'),
             amount=ocr_fields.get('amount'),
             tax_amount=ocr_fields.get('tax_amount'),
@@ -156,7 +150,7 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
         )
         db.add(ocr_result)
 
-        # 【修复核心3】在保存 LLM 结果时加入新字段
+        # 🚨 在保存 LLM 结果时，将提取到的 items 数组直接无脑存入 JSONB
         if has_llm:
             llm_result = LlmResult(
                 invoice_id=invoice_id,
@@ -166,20 +160,17 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
                 buyer_tax_id=llm_fields.get('buyer_tax_id'),
                 seller_name=llm_fields.get('seller_name'),
                 seller_tax_id=llm_fields.get('seller_tax_id'),
-                item_name=llm_fields.get('item_name'),
-                specification=llm_fields.get('specification'),
-                unit=llm_fields.get('unit'),
-                quantity=llm_fields.get('quantity'),
-                unit_price=llm_fields.get('unit_price'),
                 total_with_tax=llm_fields.get('total_with_tax'),
                 amount=llm_fields.get('amount'),
                 tax_amount=llm_fields.get('tax_amount'),
                 tax_rate=llm_fields.get('tax_rate'),
+                items=llm_fields.get('items', []) # 核心桥接点：将明细存入
             )
             db.add(llm_result)
         else:
             logger.info(f"LLM vision not available - invoice {invoice_id} using OCR-only flow")
 
+        # 比对头信息
         final_fields, diffs = _compare_and_resolve(ocr_fields, llm_fields, has_llm)
 
         _reset_extracted_fields(invoice)
@@ -196,10 +187,16 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
             )
             db.add(parsing_diff)
 
+        # 更新发票抬头基础字段
         _update_invoice_from_fields(invoice, final_fields)
+
+        # 🚨 终极偏心：完全信任大模型提取的商品明细，直接挂载给 invoice 主表
+        if has_llm and 'items' in llm_fields:
+            invoice.items = llm_fields.get('items', [])
 
         has_conflicts = any(d['needs_review'] for d in diffs)
 
+        # 判断必填项（去掉了 item_name）
         critical_fields = [
             'invoice_number',
             'issue_date',
@@ -207,8 +204,7 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
             'buyer_name',
             'buyer_tax_id',
             'seller_name',
-            'seller_tax_id',
-            'item_name',
+            'seller_tax_id'
         ]
         missing_fields = [f for f in critical_fields if not final_fields.get(f)]
         missing_critical = bool(missing_fields)
@@ -216,10 +212,9 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
             logger.warning(f"Invoice {invoice_id} missing critical fields: {missing_fields}")
 
         needs_review = has_conflicts or missing_critical
-        if needs_review:
-            invoice.status = InvoiceStatus.REVIEWING
-        else:
-            invoice.status = InvoiceStatus.CONFIRMED
+
+        # 🚨 终极修改：无论机器觉得多完美，一律强制设为“待审核”，交由人工在前端确认！
+        invoice.status = InvoiceStatus.REVIEWING
 
         await db.commit()
         logger.info(f"Invoice {invoice_id} processed successfully (needs_review={needs_review})")
@@ -251,9 +246,15 @@ def _compare_and_resolve(
             source = 'matched'
             needs_review = False
         elif ocr_value and llm_value:
-            final_value = None
-            source = 'conflict'
-            needs_review = True
+            # 🚨 终极偏心策略：只针对发票号码无脑信任 OCR
+            if field_name == 'invoice_number':
+                final_value = ocr_value
+                source = 'ocr'
+                needs_review = False
+            else:
+                final_value = None
+                source = 'conflict'
+                needs_review = True
         elif llm_value and not ocr_value:
             final_value = llm_value
             source = 'llm'
@@ -285,8 +286,8 @@ def _normalize_value(value: Any) -> Optional[str]:
         return None
     return value_str
 
-# 将数量和单价也加入数值型比较列表，避免 1 和 1.0 的误判
-NUMERIC_FIELDS = ['total_with_tax', 'amount', 'tax_amount', 'quantity', 'unit_price']
+# 剔除了 quantity 和 unit_price
+NUMERIC_FIELDS = ['total_with_tax', 'amount', 'tax_amount']
 
 def _values_are_equal(field_name: str, value1: Optional[str], value2: Optional[str]) -> bool:
     if not value1 and not value2:
@@ -326,18 +327,6 @@ def _update_invoice_from_fields(invoice: Invoice, fields: dict) -> None:
         invoice.seller_name = fields['seller_name']
     if fields.get('seller_tax_id'):
         invoice.seller_tax_id = fields['seller_tax_id']
-    if fields.get('item_name'):
-        invoice.item_name = fields['item_name']
-
-    # 【修复核心4】确保新字段存入发票主表
-    if fields.get('specification'):
-        invoice.specification = fields['specification']
-    if fields.get('unit'):
-        invoice.unit = fields['unit']
-    if fields.get('quantity'):
-        invoice.quantity = fields['quantity']
-    if fields.get('unit_price'):
-        invoice.unit_price = fields['unit_price']
 
     if fields.get('total_with_tax'):
         try:

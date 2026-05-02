@@ -140,7 +140,7 @@ class QwenProvider(BaseLLMProvider):
                     ]
                 }
             ],
-            temperature=0.1,
+            temperature=0.01,
             max_tokens=1500,
         )
         return response.choices[0].message.content.strip()
@@ -232,7 +232,23 @@ class LLMService:
         if not isinstance(value, str): return None
         cleaned = value.strip()
         if not cleaned: return None
+        # 🚨 强化清洗 1：去除大模型手欠提取的“标签前缀”
+        if field_name in ['buyer_tax_id', 'seller_tax_id']:
+            # 用正则抹除“纳税人识别号:”之类的多余文字
+            cleaned = re.sub(r'^(统一社会信用代码/纳税人识别号|纳税人识别号|税号)[:：]?\s*', '', cleaned)
+            # 抹除后如果没东西了，说明原图真的是空的
+            if not cleaned:
+                return None
 
+        # 🚨 强化清洗 2：中英文标点统一（解决“个人（个人）”冲突）
+        if field_name in ['buyer_name', 'seller_name', 'item_name']:
+            cleaned = cleaned.replace('（', '(').replace('）', ')')
+
+        # 🚨 强化清洗 3：干掉发票号码莫名其妙的前导 0
+        if field_name == 'invoice_number':
+            # 如果大模型多加了00，且把前面多余的0去掉后长度在正常范围（比如20位）
+            if cleaned.startswith('0') and len(cleaned) > 20:
+                cleaned = cleaned.lstrip('0')
         # 简单清洗金额
         if field_name in ['total_with_tax', 'amount', 'tax_amount']:
             cleaned = re.sub(r'[¥￥$€,，\s]', '', cleaned)
@@ -248,7 +264,6 @@ class LLMService:
         return cleaned
 
     def _parse_json_response(self, content: str, provider_name: str) -> Dict[str, Any]:
-        # 【新增这行】把 LLM 吐出来的原始 JSON 直接打印到控制台，查案必备！
         print(f"\n========== 大模型原始回复 ==========\n{content}\n==================================\n")
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
@@ -258,12 +273,37 @@ class LLMService:
         try:
             raw_fields = json.loads(content)
         except:
-            # 如果模型没带 markdown，尝试直接解析整个 content
             raw_fields = json.loads(content.strip())
 
-        fields: Dict[str, Optional[str]] = {}
+        fields: Dict[str, Any] = {}
         for field in REQUIRED_FIELDS:
-            fields[field] = self._normalize_field_value(field, raw_fields.get(field))
+            if field == 'items':
+                raw_items = raw_fields.get('items', [])
+                if not isinstance(raw_items, list):
+                    raw_items = []
+
+                cleaned_items = []
+                # 🚨 新增：建立别名映射字典，防范大模型自作聪明改名字
+                alias_map = {
+                    "project_name": "item_name",
+                    "name": "item_name",
+                    "goods_name": "item_name",
+                    "spec_model": "specification",
+                    "spec": "specification",
+                    "model": "specification"
+                }
+
+                for item in raw_items:
+                    if isinstance(item, dict):
+                        cleaned_item = {}
+                        for k, v in item.items():
+                            # 强行把别名转换成我们的标准字段名
+                            standard_key = alias_map.get(k, k)
+                            cleaned_item[standard_key] = self._normalize_field_value(standard_key, v)
+                        cleaned_items.append(cleaned_item)
+                fields['items'] = cleaned_items
+            else:
+                fields[field] = self._normalize_field_value(field, raw_fields.get(field))
 
         logger.info(f"LLM (FIXED QWEN) extracted fields: {list(fields.keys())}")
         return fields

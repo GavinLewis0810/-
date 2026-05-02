@@ -6,15 +6,12 @@ from sqlalchemy import (
     Text, LargeBinary, ForeignKey, Enum as SQLEnum
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB  # 🚨 引入 PostgreSQL 专属的 JSONB 神器
 
 from app.database import Base
 
 # Import AuditLog to ensure it's registered with Base.metadata
 from app.models.audit_log import AuditLog  # noqa: F401
-
-# 1. 在文件顶部的 imports 区域，确保引入了 ForeignKey
-from sqlalchemy import Column, Integer, String, DateTime, Date, Numeric, Text, LargeBinary, ForeignKey, Enum as SQLEnum
-
 
 
 class InvoiceStatus(str, Enum):
@@ -44,17 +41,15 @@ class Invoice(Base):
     buyer_tax_id = Column(String(50), nullable=True)  # 购买方纳税人识别号
     seller_name = Column(String(255), nullable=True)  # 销售方名称
     seller_tax_id = Column(String(50), nullable=True)  # 销售方纳税人识别号
-    item_name = Column(String(500), nullable=True)  # 项目名称/货物名称
-    total_with_tax = Column(Numeric(12, 2), nullable=True)  # 价税合计金额
+    total_with_tax = Column(Numeric(12, 2), nullable=True)  # 价税合计金额(全局)
 
     # Optional fields (can be NULL)
-    specification = Column(String(255), nullable=True)  # 规格型号
-    unit = Column(String(50), nullable=True)  # 单位
-    quantity = Column(Numeric(12, 4), nullable=True)  # 数量
-    unit_price = Column(Numeric(12, 4), nullable=True)  # 单价
-    amount = Column(Numeric(12, 2), nullable=True)  # 金额(不含税)
-    tax_rate = Column(String(20), nullable=True)  # 税率
-    tax_amount = Column(Numeric(12, 2), nullable=True)  # 税额
+    amount = Column(Numeric(12, 2), nullable=True)  # 总金额(不含税, 全局)
+    tax_rate = Column(String(20), nullable=True)  # 全局税率(如果整单单一税率)
+    tax_amount = Column(Numeric(12, 2), nullable=True)  # 总税额(全局)
+
+    # 🚨 新增：发票明细列表 (使用 PostgreSQL 专属的高性能 JSONB)
+    items = Column(JSONB, nullable=True, comment="发票商品明细(JSONB数组)")
 
     # Status management
     status = Column(SQLEnum(InvoiceStatus), default=InvoiceStatus.PENDING, nullable=False)
@@ -69,9 +64,10 @@ class Invoice(Base):
     llm_result = relationship("LlmResult", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
     parsing_diffs = relationship("ParsingDiff", back_populates="invoice", cascade="all, delete-orphan")
 
-    # 2. 在类的底部，新增这两个字段：指向报销单的外键和反向关联
+    # 报销单外键和反向关联
     reimbursement_id = Column(Integer, ForeignKey("reimbursements.id"), nullable=True)
     reimbursement = relationship("Reimbursement", back_populates="invoices")
+
 
 class OcrResult(Base):
     __tablename__ = "ocr_results"
@@ -79,7 +75,7 @@ class OcrResult(Base):
     id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False, unique=True)
 
-    # Parsed fields from OCR
+    # Parsed fields from OCR (只保留发票主干抬头信息)
     raw_text = Column(Text, nullable=True)  # 原始OCR文本
     invoice_number = Column(String(50), nullable=True)
     issue_date = Column(String(50), nullable=True)
@@ -87,12 +83,7 @@ class OcrResult(Base):
     buyer_tax_id = Column(String(50), nullable=True)
     seller_name = Column(String(255), nullable=True)
     seller_tax_id = Column(String(50), nullable=True)
-    item_name = Column(String(500), nullable=True)
     total_with_tax = Column(String(50), nullable=True)
-    specification = Column(String(255), nullable=True)
-    unit = Column(String(50), nullable=True)
-    quantity = Column(String(50), nullable=True)
-    unit_price = Column(String(50), nullable=True)
     amount = Column(String(50), nullable=True)
     tax_rate = Column(String(20), nullable=True)
     tax_amount = Column(String(50), nullable=True)
@@ -108,22 +99,20 @@ class LlmResult(Base):
     id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False, unique=True)
 
-    # Parsed fields from LLM
+    # Parsed fields from LLM (发票主干抬头信息)
     invoice_number = Column(String(50), nullable=True)
     issue_date = Column(String(50), nullable=True)
     buyer_name = Column(String(255), nullable=True)
     buyer_tax_id = Column(String(50), nullable=True)
     seller_name = Column(String(255), nullable=True)
     seller_tax_id = Column(String(50), nullable=True)
-    item_name = Column(String(500), nullable=True)
     total_with_tax = Column(String(50), nullable=True)
-    specification = Column(String(255), nullable=True)
-    unit = Column(String(50), nullable=True)
-    quantity = Column(String(50), nullable=True)
-    unit_price = Column(String(50), nullable=True)
     amount = Column(String(50), nullable=True)
     tax_rate = Column(String(20), nullable=True)
     tax_amount = Column(String(50), nullable=True)
+
+    # 🚨 新增：大模型解析的商品明细 (JSONB格式)
+    items = Column(JSONB, nullable=True, comment="大模型解析的商品明细")
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
