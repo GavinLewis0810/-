@@ -11,6 +11,8 @@ import {
   Input,
   Select,
   Modal,
+  Table,
+  Card,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -20,6 +22,8 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   DownloadOutlined,
+  PlusOutlined,
+  MinusCircleOutlined,
 } from '@ant-design/icons';
 import { getInvoice, getInvoiceFileUrl, updateInvoice, resolveDiff, confirmInvoice, reprocessInvoice } from '../services/api';
 import type { InvoiceDetail } from '../types/invoice';
@@ -34,16 +38,23 @@ const fieldLabels: Record<string, string> = {
   buyer_tax_id: '购买方纳税人识别号',
   seller_name: '销售方名称',
   seller_tax_id: '销售方纳税人识别号',
-  item_name: '项目名称',
   total_with_tax: '价税合计',
-  specification: '规格型号',
-  unit: '单位',
-  quantity: '数量',
-  unit_price: '单价',
-  amount: '金额',
+  amount: '总金额',
   tax_rate: '税率',
-  tax_amount: '税额',
+  tax_amount: '总税额',
 };
+
+// 💡 商品明细表格的列定义
+const itemColumns = [
+  { title: '项目名称', dataIndex: 'item_name', key: 'item_name' },
+  { title: '规格型号', dataIndex: 'specification', key: 'specification' },
+  { title: '单位', dataIndex: 'unit', key: 'unit' },
+  { title: '数量', dataIndex: 'quantity', key: 'quantity' },
+  { title: '单价', dataIndex: 'unit_price', key: 'unit_price' },
+  { title: '金额', dataIndex: 'amount', key: 'amount' },
+  { title: '税率', dataIndex: 'tax_rate', key: 'tax_rate' },
+  { title: '税额', dataIndex: 'tax_amount', key: 'tax_amount' },
+];
 
 function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -68,7 +79,11 @@ function InvoiceDetailPage() {
     try {
       const data = await getInvoice(parseInt(id));
       setInvoice(data);
-      form.setFieldsValue(data);
+      // 将 items 赋予 form，如果为 null 则默认为空数组
+      form.setFieldsValue({
+        ...data,
+        items: data.items || [],
+      });
     } catch (error) {
       message.error('获取发票详情失败');
       console.error(error);
@@ -102,7 +117,7 @@ function InvoiceDetailPage() {
       const result = await resolveDiff(parseInt(id), diffId, source, customVal);
       message.success(`${fieldLabels[result.field_name] || result.field_name} 已解决`);
       if (result.all_resolved) {
-        message.success('所有差异已解决，发票已确认');
+        message.success('所有差异已解决，请点击右上角确认发票！');
       }
       fetchInvoice();
     } catch (error) {
@@ -116,15 +131,13 @@ function InvoiceDetailPage() {
     if (!id) return;
 
     if (invoice) {
+      // 移除了对单行 item_name 的必填校验，因为现在是数组了
       const requiredFields: Array<keyof InvoiceDetail> = [
         'invoice_number',
         'issue_date',
         'total_with_tax',
         'buyer_name',
-        'buyer_tax_id',
         'seller_name',
-        'seller_tax_id',
-        'item_name',
       ];
       const missing = requiredFields.filter((field) => {
         const value = invoice[field];
@@ -138,7 +151,7 @@ function InvoiceDetailPage() {
       });
 
       if (missing.length > 0) {
-        message.error('请先补全必填字段，再进行确认。');
+        message.error('请先补全基础必填字段，再进行确认。');
         return;
       }
     }
@@ -221,8 +234,16 @@ function InvoiceDetailPage() {
           <button className={styles.rejectButton} disabled title="功能开发中">
             拒绝
           </button>
-          <button className={styles.confirmButton} onClick={handleConfirmAll}>
-            确认发票
+          <button
+            className={styles.confirmButton}
+            onClick={handleConfirmAll}
+            disabled={invoice.status === '已确认' || (hasLlm && hasUnresolvedDiffs)}
+            style={{
+              opacity: (invoice.status === '已确认' || (hasLlm && hasUnresolvedDiffs)) ? 0.5 : 1,
+              cursor: (invoice.status === '已确认' || (hasLlm && hasUnresolvedDiffs)) ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {invoice.status === '已确认' ? '已确认' : '确认发票'}
           </button>
         </div>
       </div>
@@ -255,148 +276,123 @@ function InvoiceDetailPage() {
             <div className={styles.cardBody}>
               {editMode ? (
                 <Form form={form} layout="vertical">
+                  {/* --- 1. 发票主表字段（头部信息） --- */}
                   <Row gutter={16}>
-                    <Col span={12}>
-                      <Form.Item name="invoice_number" label="发票号码">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="issue_date" label="开票日期">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="buyer_name" label="购买方名称">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="buyer_tax_id" label="购买方纳税人识别号">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="seller_name" label="销售方名称">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="seller_tax_id" label="销售方纳税人识别号">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={24}>
-                      <Form.Item name="item_name" label="项目名称">
-                        <Input />
-                      </Form.Item>
-                    </Col>
+                    <Col span={8}><Form.Item name="invoice_number" label="发票号码"><Input /></Form.Item></Col>
+                    <Col span={8}><Form.Item name="issue_date" label="开票日期"><Input /></Form.Item></Col>
+                    <Col span={8}><Form.Item name="total_with_tax" label="价税合计(总额)"><Input type="number" /></Form.Item></Col>
 
-                    {/* 【修复前台：将新字段加入编辑表单】 */}
-                    <Col span={12}>
-                      <Form.Item name="specification" label="规格型号">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="unit" label="单位">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="quantity" label="数量">
-                        <Input />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="unit_price" label="单价">
-                        <Input type="number" />
-                      </Form.Item>
-                    </Col>
+                    <Col span={12}><Form.Item name="buyer_name" label="购买方名称"><Input /></Form.Item></Col>
+                    <Col span={12}><Form.Item name="buyer_tax_id" label="购买方纳税人识别号"><Input /></Form.Item></Col>
+                    <Col span={12}><Form.Item name="seller_name" label="销售方名称"><Input /></Form.Item></Col>
+                    <Col span={12}><Form.Item name="seller_tax_id" label="销售方纳税人识别号"><Input /></Form.Item></Col>
 
+                    <Col span={8}><Form.Item name="amount" label="金额(不含税)"><Input type="number" /></Form.Item></Col>
+                    <Col span={8}><Form.Item name="tax_amount" label="总税额"><Input type="number" /></Form.Item></Col>
                     <Col span={8}>
-                      <Form.Item name="total_with_tax" label="价税合计">
-                        <Input type="number" />
-                      </Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="amount" label="金额">
-                        <Input type="number" />
-                      </Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="tax_amount" label="税额">
-                        <Input type="number" />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
                       <Form.Item name="status" label="状态">
-                        <Select
-                          options={Object.values(InvoiceStatus).map((s) => ({
-                            label: s,
-                            value: s,
-                          }))}
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="owner" label="归属人">
-                        <Input />
+                        <Select options={Object.values(InvoiceStatus).map((s) => ({ label: s, value: s }))} />
                       </Form.Item>
                     </Col>
                   </Row>
+
+                  {/* --- 2. 动态表单列表 (发票商品明细 items) --- */}
+                  <div style={{ marginTop: 24, marginBottom: 16, fontWeight: 'bold' }}>商品明细编辑</div>
+                  <Form.List name="items">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...restField }) => (
+                          <Card size="small" key={key} style={{ marginBottom: 16, background: '#fafafa' }} extra={
+                            <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f' }} />
+                          }>
+                            <Row gutter={16}>
+                              <Col span={8}>
+                                <Form.Item {...restField} name={[name, 'item_name']} label="项目名称">
+                                  <Input placeholder="输入项目名称" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={6}>
+                                <Form.Item {...restField} name={[name, 'specification']} label="规格型号">
+                                  <Input placeholder="规格型号" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={5}>
+                                <Form.Item {...restField} name={[name, 'amount']} label="金额(不含税)">
+                                  <Input placeholder="金额" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={5}>
+                                <Form.Item {...restField} name={[name, 'tax_amount']} label="税额">
+                                  <Input placeholder="税额" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={6}>
+                                <Form.Item {...restField} name={[name, 'quantity']} label="数量">
+                                  <Input placeholder="数量" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={6}>
+                                <Form.Item {...restField} name={[name, 'unit_price']} label="单价">
+                                  <Input placeholder="单价" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={6}>
+                                <Form.Item {...restField} name={[name, 'unit']} label="单位">
+                                  <Input placeholder="单位" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={6}>
+                                <Form.Item {...restField} name={[name, 'tax_rate']} label="税率">
+                                  <Input placeholder="税率" />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          </Card>
+                        ))}
+                        <Form.Item>
+                          <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                            添加一行商品明细
+                          </Button>
+                        </Form.Item>
+                      </>
+                    )}
+                  </Form.List>
                 </Form>
               ) : (
-                <Descriptions column={2} bordered size="small">
-                  <Descriptions.Item label="发票号码">
-                    {invoice.invoice_number || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="开票日期">
-                    {invoice.issue_date || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="购买方名称">
-                    {invoice.buyer_name || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="购买方纳税人识别号">
-                    {invoice.buyer_tax_id || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="销售方名称">
-                    {invoice.seller_name || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="销售方纳税人识别号">
-                    {invoice.seller_tax_id || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="项目名称" span={2}>
-                    {invoice.item_name || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="规格型号">
-                    {invoice.specification || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="单位">
-                    {invoice.unit || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="数量">
-                    {invoice.quantity != null ? invoice.quantity : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="单价">
-                    {invoice.unit_price != null ? invoice.unit_price : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="金额">
-                    {invoice.amount != null ? `¥${Number(invoice.amount).toFixed(2)}` : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="税率">
-                    {invoice.tax_rate || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="税额">
-                    {invoice.tax_amount != null ? `¥${Number(invoice.tax_amount).toFixed(2)}` : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="价税合计">
-                    {invoice.total_with_tax != null ? `¥${Number(invoice.total_with_tax).toFixed(2)}` : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="归属人">
-                    {invoice.owner || '-'}
-                  </Descriptions.Item>
-                </Descriptions>
+                <>
+                  {/* --- 1. 展示模式的全局字段 --- */}
+                  <Descriptions column={2} bordered size="small">
+                    <Descriptions.Item label="发票号码">{invoice.invoice_number || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="开票日期">{invoice.issue_date || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="购买方名称">{invoice.buyer_name || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="购买方纳税号">{invoice.buyer_tax_id || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="销售方名称">{invoice.seller_name || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="销售方纳税号">{invoice.seller_tax_id || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="总金额(不含税)">{invoice.amount || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="总税额">{invoice.tax_amount || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="价税合计" span={2}>
+                      <span style={{ color: '#cf1322', fontWeight: 'bold' }}>
+                        {invoice.total_with_tax != null ? `¥${Number(invoice.total_with_tax).toFixed(2)}` : '-'}
+                      </span>
+                    </Descriptions.Item>
+                  </Descriptions>
+
+                  {/* --- 2. 展示模式：大模型直接提取出的明细表格 --- */}
+                  <div style={{ marginTop: 24 }}>
+                    <div style={{ marginBottom: 16, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      商品明细 <span style={{ fontSize: '12px', color: '#888', fontWeight: 'normal' }}>*完全由大模型智能识别提取</span>
+                    </div>
+                    {/* 🚨 这里使用了完美的占位符和严谨的条件判断，再也不会报 TS6133 和 TS18048 了 */}
+                    <Table
+                      dataSource={invoice.items || []}
+                      columns={itemColumns}
+                      pagination={false}
+                      size="small"
+                      bordered
+                      rowKey={(_, index) => index !== undefined ? String(index) : Math.random().toString()}
+                    />
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -437,7 +433,7 @@ function InvoiceDetailPage() {
               {hasLlm && hasDiffs && (
                 <div className={styles.comparisonHeader}>
                   <span className={styles.matchStatus}>
-                    {matchCount}/{totalCount} 字段匹配
+                    {matchCount}/{totalCount} 字段匹配 (发票主干信息)
                   </span>
                 </div>
               )}
@@ -459,7 +455,6 @@ function InvoiceDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {/* 表格数据来源于后端 invoice.parsing_diffs，因为后端更新了 COMPARABLE_FIELDS，这里会自动展示新字段 */}
                     {invoice.parsing_diffs?.map((diff) => {
                       const isMatch = diff.ocr_value === diff.llm_value;
                       return (

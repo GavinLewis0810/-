@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -14,7 +14,7 @@ import {
   Statistic,
   Row,
   Col,
-  Form, // 新增 Form 组件
+  Form,
 } from 'antd';
 import {
   EyeOutlined,
@@ -23,11 +23,10 @@ import {
   ReloadOutlined,
   DownloadOutlined,
   SyncOutlined,
-  AuditOutlined, // 新增报销图标
+  AuditOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
-// 引入新增的 createReimbursement API
 import {
   listInvoices, deleteInvoice, batchUpdateInvoices,
   batchDeleteInvoices, batchReprocessInvoices, getStatistics,
@@ -70,11 +69,14 @@ function InvoiceListPage() {
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [searchValue, setSearchValue] = useState<string>('');
 
-  // ====== 新增：报销单相关的 State ======
+  // 报销单相关的 State
   const [isReimburseModalVisible, setIsReimburseModalVisible] = useState(false);
   const [reimbursing, setReimbursing] = useState(false);
   const [reimburseForm] = Form.useForm();
-  // ===================================
+
+  // 用于轮询的 Ref
+  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const fetchInvoicesRef = useRef<((silent?: boolean) => Promise<void>) | null>(null);
 
   // Column settings
   const {
@@ -85,8 +87,9 @@ function InvoiceListPage() {
     visibleColumns,
   } = useColumnSettings();
 
-  const fetchInvoices = async () => {
-    setLoading(true);
+  // 加入 silent 参数，静默刷新时不会触发全局 loading 动画
+  const fetchInvoices = async (silent: boolean = false) => {
+    if (!silent) setLoading(true);
     try {
       const params: Record<string, unknown> = { page, page_size: pageSize };
       if (statusFilter) params.status = statusFilter;
@@ -99,12 +102,17 @@ function InvoiceListPage() {
       setInvoices(response.items);
       setTotal(response.total);
     } catch (error) {
-      message.error('获取发票列表失败');
+      if (!silent) message.error('获取发票列表失败');
       console.error(error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  // 始终保持最新的 fetch 函数给定时器使用
+  useEffect(() => {
+    fetchInvoicesRef.current = fetchInvoices;
+  });
 
   const fetchStatistics = async () => {
     if (selectedRowKeys.length === 0) {
@@ -127,6 +135,36 @@ function InvoiceListPage() {
   useEffect(() => {
     fetchStatistics();
   }, [selectedRowKeys]);
+
+  // ====== 智能静默轮询机制 ======
+  useEffect(() => {
+    // 🚨 修复 TS 报错：强制转成 string 进行比对
+    const hasProcessingInvoices = invoices.some(inv => {
+      const s = inv.status as unknown as string;
+      return s === '已上传' || s === '解析中' || s === 'UPLOADED' || s === 'PROCESSING';
+    });
+
+    if (hasProcessingInvoices) {
+      if (!pollingTimerRef.current) {
+        pollingTimerRef.current = setInterval(() => {
+          if (fetchInvoicesRef.current) fetchInvoicesRef.current(true);
+        }, 3000);
+      }
+    } else {
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    }
+
+    // 组件卸载时清理定时器
+    return () => {
+      if (pollingTimerRef.current) {
+        clearInterval(pollingTimerRef.current);
+        pollingTimerRef.current = null;
+      }
+    };
+  }, [invoices]);
 
   const handleStatusChange = (value: string | undefined) => {
     setStatusFilter(value);
@@ -223,7 +261,23 @@ function InvoiceListPage() {
     });
   };
 
-  // ====== 新增：处理创建报销单提交 ======
+  // ====== 打开报销弹窗前的双重校验 ======
+  const handleOpenReimburseModal = () => {
+    // 🚨 修复 TS 报错：强制转成 string 进行比对
+    const allSelectedConfirmed = invoices
+      .filter(item => selectedRowKeys.includes(item.id))
+      .every(item => {
+        const s = item.status as unknown as string;
+        return s === '已确认' || s === 'CONFIRMED' || s === InvoiceStatus.CONFIRMED;
+      });
+
+    if (!allSelectedConfirmed) {
+      message.warning('含有未确认的发票！请仅勾选状态为“已确认”的发票进行报销。');
+      return;
+    }
+    setIsReimburseModalVisible(true);
+  };
+
   const handleCreateReimbursement = async () => {
     try {
       const values = await reimburseForm.validateFields();
@@ -236,10 +290,9 @@ function InvoiceListPage() {
       message.success('报销单提交成功！');
       setIsReimburseModalVisible(false);
       reimburseForm.resetFields();
-      setSelectedRowKeys([]); // 提交流程后清空发票勾选项
-      fetchInvoices(); // 刷新发票列表，你会看到它们的状态变成了"已报销"
+      setSelectedRowKeys([]);
+      fetchInvoices();
     } catch (error) {
-      // 捕获表单验证错误或接口错误
       if (error instanceof Error || (error as any).response) {
         message.error('创建报销单失败，请重试');
       }
@@ -247,7 +300,6 @@ function InvoiceListPage() {
       setReimbursing(false);
     }
   };
-  // =====================================
 
   const handleExport = (format: 'csv' | 'excel') => {
     const params = new URLSearchParams();
@@ -684,10 +736,10 @@ function InvoiceListPage() {
           style={{ width: 120 }}
           value={ownerFilter}
           onChange={(e) => handleOwnerChange(e.target.value)}
-          onPressEnter={fetchInvoices}
+          onPressEnter={() => fetchInvoices()}
         />
 
-        <Button icon={<ReloadOutlined />} onClick={fetchInvoices}>
+        <Button icon={<ReloadOutlined />} onClick={() => fetchInvoices()}>
           刷新
         </Button>
 
@@ -699,11 +751,10 @@ function InvoiceListPage() {
 
         {selectedRowKeys.length > 0 && (
           <>
-            {/* 新增：打包报销核心按钮 */}
             <Button
               type="primary"
               icon={<AuditOutlined />}
-              onClick={() => setIsReimburseModalVisible(true)}
+              onClick={handleOpenReimburseModal}
               style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
             >
               打包报销 (已选 {selectedRowKeys.length} 张)
@@ -746,10 +797,13 @@ function InvoiceListPage() {
           rowSelection={{
             selectedRowKeys,
             onChange: (keys) => setSelectedRowKeys(keys as number[]),
-            // 新增：已经报销的发票，不允许再次勾选
-            getCheckboxProps: (record) => ({
-              disabled: record.status === '已报销',
-            }),
+            // 🚨 修复 TS 报错：强制转成 string 进行比对
+            getCheckboxProps: (record) => {
+              const s = record.status as unknown as string;
+              return {
+                disabled: s !== '已确认' && s !== 'CONFIRMED' && s !== InvoiceStatus.CONFIRMED,
+              };
+            },
           }}
           pagination={false}
           scroll={{ x: scrollX }}
@@ -797,7 +851,7 @@ function InvoiceListPage() {
         </div>
       </div>
 
-      {/* ====== 新增：报销单填写弹窗 ====== */}
+      {/* ====== 报销单填写弹窗 ====== */}
       <Modal
         title="发起打包报销"
         open={isReimburseModalVisible}

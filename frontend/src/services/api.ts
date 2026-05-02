@@ -235,4 +235,8 @@ export const getAvailableModels = async (
   return response.data;
 };
 
+// 撤销/删除报销单
+export const deleteReimbursement = async (reimbId: number): Promise<void> => {
+  await api.delete(`/reimbursements/${reimbId}`);
+};
 export default api;

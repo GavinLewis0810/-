@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Tag, Button, Space, message, Card } from 'antd';
+import { Table, Tag, Button, Space, message, Card, Popconfirm } from 'antd'; // 🚨修改点1：新增引入 Popconfirm
 import type { ColumnsType } from 'antd/es/table';
-import { getReimbursements } from '../services/api';
+import { getReimbursements, deleteReimbursement } from '../services/api'; // 🚨修改点2：新增引入 deleteReimbursement
 import { Reimbursement, ReimbursementStatus } from '../types/invoice';
 
 const ReimbursementListPage: React.FC = () => {
@@ -24,6 +24,18 @@ const ReimbursementListPage: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // ====== 🚨修改点3：新增处理删除动作的函数 ======
+  const handleDelete = async (id: number) => {
+    try {
+      await deleteReimbursement(id);
+      message.success('报销单已撤销，发票已释放！');
+      fetchData(); // 删除成功后自动刷新列表
+    } catch (error) {
+      message.error('删除失败，请重试');
+    }
+  };
+  // ========================================
 
   // 2. 根据状态生成不同颜色的 Tag
   const getStatusTag = (status: ReimbursementStatus) => {
@@ -66,10 +78,21 @@ const ReimbursementListPage: React.FC = () => {
       key: 'action',
       render: (_, record) => (
         <Space size="middle">
-          {/* 这里预留了审批功能，你可以后续加上弹窗或者跳到详情页 */}
-          <Button type="link" size="small">查看详情</Button>
+          {/* ====== 🚨修改点4：换成气泡确认删除按钮 ====== */}
+          <Popconfirm
+            title="确定要撤销这个报销单吗？"
+            description="撤销后，包含在内的发票将恢复为可用状态。"
+            onConfirm={() => handleDelete(record.id)}
+            okText="确定撤销"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+          >
+            <Button type="link" danger size="small">删除</Button>
+          </Popconfirm>
+          {/* ========================================= */}
+
           {record.status === ReimbursementStatus.SUBMITTED && (
-            <Button type="link" size="small" danger>审批</Button>
+            <Button type="link" size="small">审批</Button>
           )}
         </Space>
       ),

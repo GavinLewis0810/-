@@ -8,6 +8,18 @@ export enum InvoiceStatus {
   NOT_REIMBURSED = '未报销', // Not yet reimbursed
 }
 
+// 🚨 新增：专门用于定义数组中每一行商品明细的类型
+export interface InvoiceItem {
+  item_name?: string | null;
+  specification?: string | null;
+  unit?: string | null;
+  quantity?: string | null;
+  unit_price?: string | null;
+  amount?: string | null;
+  tax_rate?: string | null;
+  tax_amount?: string | null;
+}
+
 export interface Invoice {
   id: number;
   file_name: string;
@@ -18,15 +30,16 @@ export interface Invoice {
   buyer_tax_id: string | null;
   seller_name: string | null;
   seller_tax_id: string | null;
-  item_name: string | null;
+
+  // 🚨 这里删除了原来的单行商品字段，保留了全局金额字段
   total_with_tax: number | null;
-  specification: string | null;
-  unit: string | null;
-  quantity: number | null;
-  unit_price: number | null;
   amount: number | null;
   tax_rate: string | null;
   tax_amount: number | null;
+
+  // 🚨 新增：发票明细数组（挂载在发票主表上）
+  items?: InvoiceItem[] | null;
+
   status: InvoiceStatus;
   owner: string | null;
   created_at: string;
@@ -43,12 +56,7 @@ export interface OcrResult {
   buyer_tax_id: string | null;
   seller_name: string | null;
   seller_tax_id: string | null;
-  item_name: string | null;
   total_with_tax: string | null;
-  specification: string | null;
-  unit: string | null;
-  quantity: string | null;
-  unit_price: string | null;
   amount: string | null;
   tax_rate: string | null;
   tax_amount: string | null;
@@ -64,15 +72,14 @@ export interface LlmResult {
   buyer_tax_id: string | null;
   seller_name: string | null;
   seller_tax_id: string | null;
-  item_name: string | null;
   total_with_tax: string | null;
-  specification: string | null;
-  unit: string | null;
-  quantity: string | null;
-  unit_price: string | null;
   amount: string | null;
   tax_rate: string | null;
   tax_amount: string | null;
+
+  // 🚨 LLM 的解析结果也会包含这个商品明细数组
+  items?: InvoiceItem[] | null;
+
   created_at: string;
 }
 
