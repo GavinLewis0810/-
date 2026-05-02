@@ -240,3 +240,41 @@ export const deleteReimbursement = async (reimbId: number): Promise<void> => {
   await api.delete(`/reimbursements/${reimbId}`);
 };
 export default api;
+
+
+// ========== 报销单 AI 审查 & 审批（新增） ==========
+
+/** AI 合规审查 */
+export const aiCheckReimbursement = (reimbId: number): Promise<{
+  compliance_status: string;
+  risk_level: string;
+  reason: string;
+  remarks?: string;
+  details: Array<{
+    issue: string;
+    severity: string;
+    comment: string;
+  }>;
+}> => {
+  return api.post(`/reimbursements/${reimbId}/ai-check`).then(res => res.data);
+};
+
+/** 审批通过 */
+export const approveReimbursement = (
+  reimbId: number,
+  reviewNote?: string
+): Promise<any> => {
+  return api.put(`/reimbursements/${reimbId}/approve`, {
+    review_note: reviewNote || '',
+  }).then(res => res.data);
+};
+
+/** 驳回报销单 */
+export const rejectReimbursement = (
+  reimbId: number,
+  reason: string
+): Promise<any> => {
+  return api.put(`/reimbursements/${reimbId}/reject`, {
+    reject_reason: reason,
+  }).then(res => res.data);
+};
