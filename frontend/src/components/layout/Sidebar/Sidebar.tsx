@@ -6,7 +6,6 @@ import {
 } from '@ant-design/icons';
 import styles from './Sidebar.module.css';
 
-
 interface NavItem {
   path: string;
   label: string;
@@ -17,9 +16,11 @@ interface SidebarProps {
   onOpenLLMConfig: () => void;
 }
 
+// 🚀 新增：在导航数组里加上“数据大屏”
 const navItems: NavItem[] = [
+  { path: '/dashboard', label: '数据大屏' }, // <--- 新增的大屏入口
   { path: '/', label: '发票列表' },
-  { path: '/reimbursements', label: '报销单台账' }, // <--- 新增这一行
+  { path: '/reimbursements', label: '报销单台账' },
   { path: '/upload', label: '上传发票' },
 ];
 

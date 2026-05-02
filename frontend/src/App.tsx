@@ -7,6 +7,9 @@ import LLMConfigModal from './components/LLMConfigModal';
 import { MainLayout } from './components/layout';
 import { getLLMStatus } from './services/api';
 import ReimbursementListPage from './pages/ReimbursementListPage';
+// 🚀 新增：引入 Dashboard 页面
+import DashboardPage from './pages/DashboardPage';
+
 function AppContent() {
   const [llmConfigOpen, setLlmConfigOpen] = useState(false);
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null);
@@ -49,6 +52,8 @@ function AppContent() {
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
         <Route path="/reimbursements" element={<ReimbursementListPage />} />
+        {/* 🚀 新增：挂载大屏路由 */}
+        <Route path="/dashboard" element={<DashboardPage />} />
       </Routes>
 
       <LLMConfigModal

@@ -162,6 +162,11 @@ async def ai_check_reimbursement(
             "details": [],
         }
 
+    # 🚀🚀🚀 新增核心逻辑：把 AI 的判断永远刻在数据库里！
+    reimb.ai_risk_level = result_dict.get("risk_level", "未知")
+    reimb.ai_reason = result_dict.get("reason", "暂无意见")
+    await db.commit()  # 提交到 PostgreSQL 数据库保存！
+
     return result_dict
 
 
@@ -267,4 +272,69 @@ async def reject_reimbursement(
     return {
         "message": "已驳回，关联发票已释放",
         "reimbursement_id": reimb_id,
+    }
+
+
+@router.get("/dashboard/stats")
+async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
+    """获取大屏的【全真】统计图表数据 (发票级细粒度拆分)"""
+    query = select(Reimbursement).options(selectinload(Reimbursement.invoices))
+    result = await db.execute(query)
+    reimbs = result.scalars().all()
+
+    trend_dict = {}
+    pie_dict = {}
+    ai_reject_count = 0
+
+    for r in reimbs:
+        dept = r.project_code or '通用部门'
+
+        # ==========================================
+        # 1. 柱状图真实数据：【细化到发票级别】进行打散统计
+        # ==========================================
+        if r.invoices:
+            # 如果报销单底下有发票，就一张张遍历，分别计算月份和金额
+            for inv in r.invoices:
+                # 拿发票自己的时间，如果没有，降级用报销单的创建时间
+                month = inv.issue_date.strftime('%Y-%m') if inv.issue_date else (
+                    r.created_at.strftime('%Y-%m') if r.created_at else "2026-05")
+                # 拿发票自己的金额 (确保转换成 float 进行累加)
+                inv_amount = float(inv.total_with_tax or 0)
+
+                trend_key = f"{month}_{dept}"
+                if trend_key not in trend_dict:
+                    trend_dict[trend_key] = {"month": month, "type": dept, "value": 0}
+
+                # 精准累加这单张发票的金额
+                trend_dict[trend_key]["value"] += inv_amount
+        else:
+            # 防御性编程：如果报销单刚建好，还没绑发票，就用报销单总金额和创建时间
+            month = r.created_at.strftime('%Y-%m') if r.created_at else "2026-05"
+            amount = float(r.total_amount or 0)
+            trend_key = f"{month}_{dept}"
+            if trend_key not in trend_dict:
+                trend_dict[trend_key] = {"month": month, "type": dept, "value": 0}
+            trend_dict[trend_key]["value"] += amount
+
+        # ==========================================
+        # 2. 饼图真实数据：按报销单的 AI 风险等级分组 (报销单级别)
+        # ==========================================
+        risk = getattr(r, 'ai_risk_level', None)
+        if not risk:
+            risk = "未扫描(人工审核)"
+
+        if risk not in pie_dict:
+            pie_dict[risk] = {"type": risk, "value": 0}
+
+        # 饼图统计的是“单数”，所以每次 +1
+        pie_dict[risk]["value"] += 1
+
+        # 3. 真实统计高危拦截单量
+        if risk in ["高", "高风险", "不合规", "高危"]:
+            ai_reject_count += 1
+
+    return {
+        "trendData": list(trend_dict.values()),
+        "pieData": list(pie_dict.values()),
+        "aiRejectCount": ai_reject_count
     }

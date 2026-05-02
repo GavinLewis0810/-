@@ -29,6 +29,10 @@ class Reimbursement(Base):
 
     status = Column(SQLEnum(ReimbursementStatus), default=ReimbursementStatus.SUBMITTED, nullable=False)
 
+    # 🚀🚀🚀 新增：专门存放 AI 风控结果的字段，永久固化 AI 审查结果
+    ai_risk_level = Column(String(50), nullable=True, comment="AI风险评级")
+    ai_reason = Column(Text, nullable=True, comment="AI深度审计意见")
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

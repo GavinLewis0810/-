@@ -278,3 +278,9 @@ export const rejectReimbursement = (
     reject_reason: reason,
   }).then(res => res.data);
 };
+
+// 获取大屏真实图表数据
+export const getDashboardStats = async () => {
+  const response = await api.get('/reimbursements/dashboard/stats');
+  return response.data;
+};
