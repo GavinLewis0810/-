@@ -5,11 +5,7 @@ import type {
   InvoiceListResponse,
   Statistics,
   UploadResponse,
-  LLMStatusResponse,
-  LLMConfigRequest,
-  LLMConfigResponse,
-  LLMTestResponse,
-  ModelsResponse,
+  UserProfile,
 } from '../types/invoice';
 
 import type { Reimbursement, ReimbursementCreate } from '../types/invoice';
@@ -21,9 +17,36 @@ const api = axios.create({
   },
 });
 
+// 请求拦截器：自动带上 session token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('sessionToken');
+  if (token) {
+    config.headers['X-Session-Token'] = token;
+  }
+  return config;
+});
+
+// 响应拦截器：401 时自动清理登录态，不再骚扰后端
+api.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('sessionToken');
+      localStorage.removeItem('currentUser');
+    }
+    return Promise.reject(error);
+  },
+);
+
 // 获取报销单列表
 export const getReimbursements = async (): Promise<Reimbursement[]> => {
   const response = await api.get('/reimbursements');
+  return response.data;
+};
+
+// 获取单个报销单详情（含完整发票数据）
+export const getReimbursementDetail = async (id: number): Promise<Reimbursement> => {
+  const response = await api.get(`/reimbursements/${id}`);
   return response.data;
 };
 
@@ -168,6 +191,16 @@ export const confirmInvoice = async (
   return response.data;
 };
 
+// Auto-confirm invoices without conflicts
+export const autoConfirmInvoices = async (
+  invoiceIds: number[]
+): Promise<{ message: string; confirmed_ids: number[]; need_manual_ids: number[] }> => {
+  const response = await api.post('/invoices/auto-confirm', {
+    invoice_ids: invoiceIds,
+  });
+  return response.data;
+};
+
 // Re-process invoice (run OCR/LLM again)
 export const reprocessInvoice = async (
   invoiceId: number
@@ -183,55 +216,6 @@ export const batchReprocessInvoices = async (
   const response = await api.post('/invoices/batch-reprocess', {
     invoice_ids: invoiceIds,
   });
-  return response.data;
-};
-
-// LLM Configuration APIs
-
-// Get LLM status
-export const getLLMStatus = async (): Promise<LLMStatusResponse> => {
-  const response = await api.get('/settings/llm/status');
-  return response.data;
-};
-
-// Configure LLM provider
-export const configureLLM = async (
-  config: LLMConfigRequest,
-  configToken?: string
-): Promise<LLMConfigResponse> => {
-  const response = await api.post('/settings/llm/configure', config, {
-    headers: configToken ? { 'X-LLM-Config-Token': configToken } : undefined,
-  });
-  return response.data;
-};
-
-// Test LLM connection
-export const testLLMConnection = async (): Promise<LLMTestResponse> => {
-  const response = await api.post('/settings/llm/test');
-  return response.data;
-};
-
-// Test LLM config before saving (uses actual provider client library)
-export const testLLMConfig = async (
-  config: { provider: string; api_key: string; model?: string; base_url?: string }
-): Promise<{ success: boolean; message: string; response_time_ms?: number }> => {
-  const response = await api.post('/settings/llm/test-config', config);
-  return response.data;
-};
-
-// Get available models for a provider
-export const getAvailableModels = async (
-  provider?: string,
-  visionOnly: boolean = false
-): Promise<ModelsResponse> => {
-  const params: Record<string, string | boolean> = {};
-  if (provider) {
-    params.provider = provider;
-  }
-  if (visionOnly) {
-    params.vision_only = true;
-  }
-  const response = await api.get('/settings/models', { params });
   return response.data;
 };
 
@@ -279,8 +263,293 @@ export const rejectReimbursement = (
   }).then(res => res.data);
 };
 
+/** 出纳确认打款 */
+export const completeReimbursement = (reimbId: number): Promise<any> => {
+  return api.put(`/reimbursements/${reimbId}/complete`).then(res => res.data);
+};
+
+// 获取报销单资金追踪时间轴
+export const getReimbursementTimeline = async (reimbId: number): Promise<{
+  timeline: Array<{
+    time: string | null;
+    status: 'done' | 'processing' | 'pending' | 'error';
+    title: string;
+    description: string;
+  }>;
+  reimbursement_id: number;
+}> => {
+  const response = await api.get(`/reimbursements/${reimbId}/timeline`);
+  return response.data;
+};
+
 // 获取大屏真实图表数据
 export const getDashboardStats = async () => {
   const response = await api.get('/reimbursements/dashboard/stats');
   return response.data;
+};
+
+// ========== 管理员：用户管理 ==========
+
+export interface AdminUserItem {
+  id: number;
+  username: string;
+  full_name: string;
+  role: string;
+  department: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  invoice_count: number;
+  reimbursement_count: number;
+}
+
+/** 获取所有用户列表（含发票/报销统计） */
+export const getAdminUsers = async (): Promise<AdminUserItem[]> => {
+  const response = await api.get('/admin/users');
+  return response.data;
+};
+
+/** 启用/禁用用户 */
+export const toggleUserStatus = async (userId: number): Promise<{ message: string; is_active: boolean }> => {
+  const response = await api.put(`/admin/users/${userId}/toggle-status`);
+  return response.data;
+};
+
+/** 重置用户密码 */
+export const resetUserPassword = async (userId: number, newPassword: string): Promise<{ message: string }> => {
+  const response = await api.put(`/admin/users/${userId}/reset-password`, { new_password: newPassword });
+  return response.data;
+};
+
+// ========== 消息通知 ==========
+
+export interface NotificationItem {
+  id: number;
+  title: string;
+  message: string | null;
+  is_read: boolean;
+  entity_type: string | null;
+  entity_id: number | null;
+  created_at: string;
+}
+
+/** 获取通知列表 */
+export const getNotifications = async (unreadOnly = false): Promise<NotificationItem[]> => {
+  const response = await api.get('/notifications', { params: unreadOnly ? { unread_only: true } : {} });
+  return response.data;
+};
+
+/** 获取未读数量 */
+export const getUnreadCount = async (): Promise<{ count: number }> => {
+  const response = await api.get('/notifications/unread-count');
+  return response.data;
+};
+
+/** 标记已读 */
+export const markNotificationRead = async (id: number): Promise<void> => {
+  await api.post(`/notifications/${id}/read`);
+};
+
+/** 全部已读 */
+export const markAllNotificationsRead = async (): Promise<void> => {
+  await api.post('/notifications/read-all');
+};
+
+// ========== 项目管理（预算） ==========
+
+export interface ProjectItem {
+  id: number;
+  project_code: string;
+  project_name: string;
+  budget: number | string;
+  used_amount: number | string;
+  remaining: number | string;
+  usage_rate: number | string;
+  created_at: string;
+}
+
+export const getProjects = async (): Promise<ProjectItem[]> => {
+  const response = await api.get('/projects');
+  return response.data;
+};
+
+export const createProject = async (data: { project_code: string; project_name: string; budget: number }): Promise<ProjectItem> => {
+  const response = await api.post('/projects', data);
+  return response.data;
+};
+
+export const updateProject = async (id: number, data: { project_name?: string; budget?: number }): Promise<ProjectItem> => {
+  const response = await api.put(`/projects/${id}`, data);
+  return response.data;
+};
+
+export const deleteProject = async (id: number): Promise<void> => {
+  await api.delete(`/projects/${id}`);
+};
+
+// ========== 银行卡管理 ==========
+
+export interface BankCardItem {
+  id: number;
+  bank_name: string;
+  account_name: string;
+  card_number: string;
+  is_default: boolean;
+}
+
+export const getBankCards = async (): Promise<BankCardItem[]> => {
+  const response = await api.get('/bank-cards');
+  return response.data;
+};
+
+export const addBankCard = async (data: { bank_name: string; account_name: string; card_number: string }): Promise<BankCardItem> => {
+  const response = await api.post('/bank-cards', data);
+  return response.data;
+};
+
+export const setDefaultBankCard = async (id: number): Promise<void> => {
+  await api.put(`/bank-cards/${id}/default`);
+};
+
+export const deleteBankCard = async (id: number): Promise<void> => {
+  await api.delete(`/bank-cards/${id}`);
+};
+
+// ========== 事前申请单 ==========
+
+export interface ApplicationItem {
+  id: number;
+  title: string;
+  description: string | null;
+  estimated_amount: number;
+  used_amount: number;
+  project_code: string | null;
+  project_name: string | null;
+  status: string;
+  reject_reason: string | null;
+  user_name: string | null;
+  created_at: string;
+}
+
+export const getApplications = async (): Promise<ApplicationItem[]> => {
+  const response = await api.get('/applications');
+  return response.data;
+};
+
+export const createApplication = async (data: { title: string; description: string; estimated_amount: number; project_code?: string }): Promise<ApplicationItem> => {
+  const response = await api.post('/applications', data);
+  return response.data;
+};
+
+export const approveApplication = async (id: number): Promise<void> => {
+  await api.put(`/applications/${id}/approve`);
+};
+
+export const rejectApplication = async (id: number, reason: string): Promise<void> => {
+  await api.put(`/applications/${id}/reject`, { reason });
+};
+
+export const deleteApplication = async (id: number): Promise<void> => {
+  await api.delete(`/applications/${id}`);
+};
+
+// ========== 动态审批规则 ==========
+
+export interface ApprovalRuleItem {
+  id: number;
+  name: string;
+  entity_type: string;
+  priority: number;
+  conditions: any;
+  action: string;
+  is_active: boolean;
+  created_at: string | null;
+}
+
+export const getApprovalRules = async (entity_type?: string): Promise<ApprovalRuleItem[]> => {
+  const response = await api.get('/approval-rules', { params: entity_type ? { entity_type } : {} });
+  return response.data;
+};
+
+export const createApprovalRule = async (data: {
+  name: string; entity_type?: string; priority: number; conditions: any; action: string; is_active: boolean;
+}): Promise<ApprovalRuleItem> => {
+  const response = await api.post('/approval-rules', data);
+  return response.data;
+};
+
+export const updateApprovalRule = async (id: number, data: {
+  name: string; entity_type?: string; priority: number; conditions: any; action: string; is_active: boolean;
+}): Promise<ApprovalRuleItem> => {
+  const response = await api.put(`/approval-rules/${id}`, data);
+  return response.data;
+};
+
+export const deleteApprovalRule = async (id: number): Promise<void> => {
+  await api.delete(`/approval-rules/${id}`);
+};
+
+// ========== 个人信息 & 电子签名 ==========
+
+export const updateProfile = async (data: {
+  full_name?: string;
+  department?: string;
+  signature?: string;
+}): Promise<{ message: string; user: UserProfile }> => {
+  const response = await api.put('/auth/profile', data);
+  return response.data;
+};
+
+export const changePassword = async (data: {
+  old_password: string;
+  new_password: string;
+}): Promise<{ message: string }> => {
+  const response = await api.put('/auth/password', data);
+  return response.data;
+};
+
+// ========== 借款申请 ==========
+
+export interface BorrowingItem {
+  id: number;
+  title: string;
+  estimated_amount: number;
+  expected_repayment_date: string | null;
+  status: string;
+  reject_reason: string | null;
+  repaid_amount: number | null;
+  reimbursement_id: number | null;
+  application_id: number | null;
+  application_title: string | null;
+  user_name: string | null;
+  approver_name: string | null;
+  created_at: string | null;
+}
+
+export const getBorrowings = async (): Promise<BorrowingItem[]> => {
+  const response = await api.get('/borrowings');
+  return response.data;
+};
+
+export const createBorrowing = async (data: {
+  title: string;
+  estimated_amount: number;
+  expected_repayment_date?: string;
+  application_id?: number;
+}): Promise<BorrowingItem> => {
+  const response = await api.post('/borrowings', data);
+  return response.data;
+};
+
+export const approveBorrowing = async (id: number): Promise<BorrowingItem> => {
+  const response = await api.put(`/borrowings/${id}/approve`);
+  return response.data;
+};
+
+export const rejectBorrowing = async (id: number, reason: string): Promise<BorrowingItem> => {
+  const response = await api.put(`/borrowings/${id}/reject`, { reason });
+  return response.data;
+};
+
+export const deleteBorrowing = async (id: number): Promise<void> => {
+  await api.delete(`/borrowings/${id}`);
 };

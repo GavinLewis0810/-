@@ -6,13 +6,13 @@ from enum import Enum
 
 
 class InvoiceStatus(str, Enum):
-    UPLOADED = "已上传"  # File uploaded, waiting for OCR processing
-    PROCESSING = "解析中"  # OCR/LLM processing in progress
-    PENDING = "待处理"  # Processing complete, no conflicts
-    REVIEWING = "待审核"  # Has conflicts or missing fields, needs manual review
-    CONFIRMED = "已确认"  # Manually reviewed and confirmed
-    REIMBURSED = "已报销"  # Reimbursement completed
-    NOT_REIMBURSED = "未报销"  # Not yet reimbursed
+    UPLOADED = "已上传"
+    PROCESSING = "解析中"
+    PENDING = "待处理"
+    REVIEWING = "待确认"
+    CONFIRMED = "已确认"
+    REIMBURSED = "已报销"
+    NOT_REIMBURSED = "未报销"
 
 
 # 🚨 1. 新增：专门用于解析 JSONB 中每一行商品明细的 Schema
@@ -59,6 +59,7 @@ class InvoiceResponse(InvoiceBase):
     file_type: str
     status: InvoiceStatus
     owner: Optional[str] = None
+    reimbursement_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

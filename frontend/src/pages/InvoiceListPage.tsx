@@ -24,13 +24,14 @@ import {
   DownloadOutlined,
   SyncOutlined,
   AuditOutlined,
+  CheckOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import {
   listInvoices, deleteInvoice, batchUpdateInvoices,
   batchDeleteInvoices, batchReprocessInvoices, getStatistics,
-  createReimbursement
+  createReimbursement, autoConfirmInvoices, getProjects, getBankCards, getApplications, getBorrowings
 } from '../services/api';
 import type { Invoice, Statistics } from '../types/invoice';
 import { InvoiceStatus } from '../types/invoice';
@@ -47,7 +48,7 @@ const statusColors: Record<string, string> = {
   '已上传': 'default',
   '解析中': 'processing',
   '待处理': 'blue',
-  '待审核': 'warning',
+  '待确认': 'warning',
   '已确认': 'success',
   '已报销': 'green',
   '未报销': 'orange',
@@ -63,6 +64,9 @@ function InvoiceListPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   const [statistics, setStatistics] = useState<Statistics | null>(null);
 
+  // 当前用户
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
   // Filters
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [ownerFilter, setOwnerFilter] = useState<string>('');
@@ -73,6 +77,38 @@ function InvoiceListPage() {
   const [isReimburseModalVisible, setIsReimburseModalVisible] = useState(false);
   const [reimbursing, setReimbursing] = useState(false);
   const [reimburseForm] = Form.useForm();
+  const [projectList, setProjectList] = useState<{ code: string; name: string; remaining: number | string }[]>([]);
+  const [bankCards, setBankCards] = useState<{ id: number; label: string }[]>([]);
+  const [approvedApps, setApprovedApps] = useState<{ id: number; title: string; amount: number; used: number }[]>([]);
+  const [approvedBorrowings, setApprovedBorrowings] = useState<{ id: number; title: string; amount: number }[]>([]);
+
+  // 加载项目列表、银行卡、已通过的申请单
+  const loadFormData = async () => {
+    try {
+      const [projects, cards, apps, borrowings] = await Promise.all([getProjects(), getBankCards(), getApplications(), getBorrowings()]);
+      setProjectList(projects.map(p => ({ code: p.project_code, name: p.project_name, remaining: p.remaining })));
+      setBankCards(cards.map(c => ({
+        id: c.id,
+        label: `${c.bank_name} ····${c.card_number.slice(-4)} ${c.is_default ? '(默认)' : ''} — ${c.account_name}`,
+      })));
+      setApprovedApps(apps.filter(a => a.status === '已通过').map(a => ({
+        id: a.id, title: a.title, amount: a.estimated_amount, used: a.used_amount || 0,
+      })));
+      setApprovedBorrowings(borrowings.filter(b => b.status === '已批准').map(b => ({
+        id: b.id, title: b.title, amount: b.estimated_amount,
+      })));
+    } catch {}
+  };
+
+  // 选中的申请单金额，用于超额预警
+  const [selectedAppAmount, setSelectedAppAmount] = useState<number>(0);
+
+  // 选中发票的合计金额
+  const selectedInvoicesTotal = useMemo(() => {
+    return invoices
+      .filter(item => selectedRowKeys.includes(item.id))
+      .reduce((sum, item) => sum + (Number(item.total_with_tax) || 0), 0);
+  }, [invoices, selectedRowKeys]);
 
   // 用于轮询的 Ref
   const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -135,6 +171,36 @@ function InvoiceListPage() {
   useEffect(() => {
     fetchStatistics();
   }, [selectedRowKeys]);
+
+  // 初始化当前用户
+  useEffect(() => {
+    const saved = localStorage.getItem('currentUser');
+    if (saved) setCurrentUser(JSON.parse(saved));
+  }, []);
+
+  // 一键确认：自动确认所有无冲突的「待确认」发票
+  const handleAutoConfirm = () => {
+    Modal.confirm({
+      title: '一键确认',
+      content: '系统将自动检查所选发票，仅确认无 OCR/LLM 冲突且字段完整的发票。有差异的仍需手动处理。',
+      okText: '开始确认',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await autoConfirmInvoices(selectedRowKeys);
+          if (res.confirmed_ids.length > 0) {
+            message.success(`${res.message}${res.need_manual_ids.length > 0 ? `，${res.need_manual_ids.length} 张需手动处理` : ''}`);
+          } else {
+            message.warning('所选发票均存在冲突或字段缺失，请手动处理');
+          }
+          setSelectedRowKeys([]);
+          fetchInvoices();
+        } catch (error) {
+          message.error('一键确认失败');
+        }
+      },
+    });
+  };
 
   // ====== 智能静默轮询机制 ======
   useEffect(() => {
@@ -263,6 +329,7 @@ function InvoiceListPage() {
 
   // ====== 打开报销弹窗前的双重校验 ======
   const handleOpenReimburseModal = () => {
+    loadFormData();  // 加载最新项目列表+银行卡
     // 🚨 修复 TS 报错：强制转成 string 进行比对
     const allSelectedConfirmed = invoices
       .filter(item => selectedRowKeys.includes(item.id))
@@ -286,22 +353,24 @@ function InvoiceListPage() {
         title: values.title,
         project_code: values.project_code,
         invoice_ids: selectedRowKeys,
+        bank_card_id: values.bank_card_id,
+        application_id: values.application_id,
+        borrowing_id: values.borrowing_id,
       });
       message.success('报销单提交成功！');
       setIsReimburseModalVisible(false);
       reimburseForm.resetFields();
       setSelectedRowKeys([]);
       fetchInvoices();
-    } catch (error) {
-      if (error instanceof Error || (error as any).response) {
-        message.error('创建报销单失败，请重试');
-      }
+    } catch (error: any) {
+      const msg = error?.response?.data?.detail || '创建报销单失败，请重试';
+      message.error(msg);
     } finally {
       setReimbursing(false);
     }
   };
 
-  const handleExport = (format: 'csv' | 'excel') => {
+  const handleExport = async (format: 'csv' | 'excel') => {
     const params = new URLSearchParams();
 
     if (selectedRowKeys.length > 0) {
@@ -321,7 +390,19 @@ function InvoiceListPage() {
     }
 
     const url = `/api/invoices/export/${format}?${params.toString()}`;
-    window.open(url, '_blank');
+    try {
+      const token = localStorage.getItem('sessionToken');
+      const res = await fetch(url, { headers: { 'X-Session-Token': token || '' } });
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const ext = format === 'excel' ? 'xlsx' : 'csv';
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = `发票导出.${ext}`;
+      a.click();
+      window.URL.revokeObjectURL(objUrl);
+    } catch { message.error('导出失败'); }
   };
 
   // All column definitions
@@ -751,6 +832,11 @@ function InvoiceListPage() {
 
         {selectedRowKeys.length > 0 && (
           <>
+            <span style={{ lineHeight: '32px' }}>
+              已选择 {selectedRowKeys.length} 项
+            </span>
+
+            {/* ====== 打包报销：员工和管理员都有 ====== */}
             <Button
               type="primary"
               icon={<AuditOutlined />}
@@ -760,28 +846,28 @@ function InvoiceListPage() {
               打包报销 (已选 {selectedRowKeys.length} 张)
             </Button>
 
-            <Select
-              placeholder="批量修改状态"
-              style={{ width: 140 }}
-              onChange={handleBatchUpdate}
-              options={Object.values(InvoiceStatus).map((s) => ({ label: s, value: s }))}
-            />
-            <Button
-              icon={<SyncOutlined />}
-              onClick={handleBatchReprocess}
-            >
-              重新解析
-            </Button>
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              onClick={handleBatchDelete}
-            >
-              批量删除
-            </Button>
-            <span style={{ lineHeight: '32px' }}>
-              已选择 {selectedRowKeys.length} 项
-            </span>
+            {currentUser?.role !== 'admin' ? (
+              /* ====== 员工端额外操作：一键确认 ====== */
+              <Button icon={<CheckOutlined />} onClick={handleAutoConfirm}>
+                一键确认
+              </Button>
+            ) : (
+              /* ====== 管理员端额外操作：批量管理 ====== */
+              <>
+                <Select
+                  placeholder="批量修改状态"
+                  style={{ width: 140 }}
+                  onChange={handleBatchUpdate}
+                  options={Object.values(InvoiceStatus).map((s) => ({ label: s, value: s }))}
+                />
+                <Button icon={<SyncOutlined />} onClick={handleBatchReprocess}>
+                  重新解析
+                </Button>
+                <Button danger icon={<DeleteOutlined />} onClick={handleBatchDelete}>
+                  批量删除
+                </Button>
+              </>
+            )}
           </>
         )}
       </div>
@@ -800,6 +886,14 @@ function InvoiceListPage() {
             // 🚨 修复 TS 报错：强制转成 string 进行比对
             getCheckboxProps: (record) => {
               const s = record.status as unknown as string;
+              const isEmployee = currentUser?.role !== 'admin';
+              // 已被报销单占用的发票不可再选
+              if (record.reimbursement_id != null) return { disabled: true };
+              // 员工可勾选「待确认」和「已确认」；管理员只能勾选「已确认」
+              if (isEmployee) {
+                const ok = s === '待确认' || s === '已确认' || s === 'REVIEWING' || s === 'CONFIRMED' || s === InvoiceStatus.REVIEWING || s === InvoiceStatus.CONFIRMED;
+                return { disabled: !ok };
+              }
               return {
                 disabled: s !== '已确认' && s !== 'CONFIRMED' && s !== InvoiceStatus.CONFIRMED,
               };
@@ -877,9 +971,71 @@ function InvoiceListPage() {
           </Form.Item>
           <Form.Item
             name="project_code"
-            label="项目编号 / 课题组编号 (选填)"
+            label="项目编号 / 课题组编号"
+            rules={[{ required: true, message: '请选择关联的项目' }]}
           >
-            <Input placeholder="例如：NSFC-2026-001" />
+            <Select
+              showSearch
+              placeholder="请选择项目"
+              options={projectList.map(p => ({
+                value: p.code,
+                label: `${p.code} — ${p.name} (剩余 ¥${Number(p.remaining).toFixed(0)})`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="application_id"
+            label="关联事前申请单"
+            help={selectedAppAmount > 0 ? `选中发票合计 ¥${selectedInvoicesTotal.toFixed(2)}，申请单额度 ¥${selectedAppAmount.toFixed(2)}` : ''}
+          >
+            <Select
+              placeholder="选择已通过的事前申请（选填）"
+              allowClear
+              onChange={(val) => {
+                const app = approvedApps.find(a => a.id === val);
+                setSelectedAppAmount(app ? app.amount : 0);
+              }}
+              options={approvedApps.map(a => ({
+                value: a.id,
+                label: `${a.title} — 预估 ¥${Number(a.amount).toFixed(0)}（已用 ¥${a.used.toFixed(0)}）`,
+              }))}
+              notFoundContent="暂无已通过的申请单，请先在「事前申请」页面提交"
+            />
+            {selectedAppAmount > 0 && selectedInvoicesTotal > selectedAppAmount && (
+              <div style={{
+                marginTop: 8, padding: '8px 12px',
+                background: '#fff2f0', border: '1px solid #ffccc7',
+                borderRadius: 6, color: '#E42313', fontSize: 13,
+              }}>
+                ⚠️ 报销金额超出申请额度 ¥{(selectedInvoicesTotal - selectedAppAmount).toFixed(2)}！
+                申请额度 ¥{selectedAppAmount.toFixed(2)}，本次报销 ¥{selectedInvoicesTotal.toFixed(2)}
+              </div>
+            )}
+          </Form.Item>
+          <Form.Item
+            name="borrowing_id"
+            label="冲销借款（选填）"
+            help="选择已批准的借款申请，报销完成时自动冲销"
+          >
+            <Select
+              placeholder="选择要冲销的借款"
+              allowClear
+              options={approvedBorrowings.map(b => ({
+                value: b.id,
+                label: `${b.title} — ¥${Number(b.amount).toFixed(0)}`,
+              }))}
+              notFoundContent="暂无已批准的借款，请先在「借款申请」页面提交"
+            />
+          </Form.Item>
+          <Form.Item
+            name="bank_card_id"
+            label="收款银行卡"
+          >
+            <Select
+              placeholder="选择收款账户"
+              options={bankCards.map(c => ({ value: c.id, label: c.label }))}
+              notFoundContent="暂无银行卡，请先在「收款账户」页面添加"
+            />
           </Form.Item>
         </Form>
       </Modal>

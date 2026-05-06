@@ -93,27 +93,24 @@ class QwenProvider(BaseLLMProvider):
             with self._lock:
                 if self._client is None:
                     from openai import OpenAI
-                    # 【强制焊死】直接写死阿里云百炼官方接口和你的真实 Key
                     self._client = OpenAI(
-                        api_key="sk-1bffc641148948bca84e73bf2507280c",
-                        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        api_key=settings.qwen_api_key,
+                        base_url=settings.qwen_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
                     )
         return self._client
 
     def is_configured(self) -> bool:
-        # 【强制焊死】
-        return True
+        return bool(settings.qwen_api_key)
 
     def get_provider_name(self) -> str:
         return "qwen"
 
     def supports_vision(self) -> bool:
-        # 【强制焊死】
-        return True
+        return bool(settings.qwen_api_key)
 
     def chat_completion(self, system_prompt: str, user_prompt: str) -> str:
         response = self.client.chat.completions.create(
-            model="qwen-vl-plus",
+            model=settings.qwen_model or "qwen-vl-plus",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -126,7 +123,7 @@ class QwenProvider(BaseLLMProvider):
     def vision_completion(self, system_prompt: str, user_prompt: str, image_data: bytes, mime_type: str = "image/png") -> str:
         base64_image = base64.b64encode(image_data).decode("utf-8")
         response = self.client.chat.completions.create(
-            model="qwen-vl-plus", # 【强制焊死】使用视觉模型
+            model=settings.qwen_model or "qwen-vl-plus",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
@@ -194,22 +191,31 @@ class LLMService:
 
     @property
     def active_provider(self) -> Optional[BaseLLMProvider]:
-        """【强制焊死】无论前端选什么，始终返回配置好的 QwenProvider"""
-        return self._get_provider("qwen")
+        provider_name = settings.get_active_llm_provider()
+        if provider_name:
+            return self._get_provider(provider_name)
+        return None
 
     @property
     def is_available(self) -> bool:
-        """【强制焊死】始终可用"""
-        return True
+        return settings.is_llm_configured()
 
     def get_configured_providers(self) -> list[str]:
-        return ["qwen"]
+        configured = []
+        for name in PROVIDERS:
+            provider = self._get_provider(name)
+            if provider and provider.is_configured():
+                configured.append(name)
+        return configured
 
     def get_active_provider_name(self) -> Optional[str]:
-        return "qwen"
+        return settings.get_active_llm_provider()
 
     def supports_vision(self) -> bool:
-        return True
+        provider = self.active_provider
+        if provider is None:
+            return False
+        return provider.supports_vision()
 
     def parse_invoice_from_image(self, image_data: bytes, mime_type: str = "image/png") -> Dict[str, Any]:
         """解析核心逻辑"""
@@ -290,7 +296,18 @@ class LLMService:
                     "goods_name": "item_name",
                     "spec_model": "specification",
                     "spec": "specification",
-                    "model": "specification"
+                    "model": "specification",
+                    "规格型号": "specification",
+                    "规格": "specification",
+                    "型号": "specification",
+                    "商品名称": "item_name",
+                    "项目名称": "item_name",
+                    "单位": "unit",
+                    "数量": "quantity",
+                    "单价": "unit_price",
+                    "金额": "amount",
+                    "税率": "tax_rate",
+                    "税额": "tax_amount",
                 }
 
                 for item in raw_items:

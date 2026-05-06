@@ -1,11 +1,11 @@
 export enum InvoiceStatus {
-  UPLOADED = '已上传',      // File uploaded, waiting for OCR processing
-  PROCESSING = '解析中',    // OCR/LLM processing in progress
-  PENDING = '待处理',       // Processing complete, no conflicts
-  REVIEWING = '待审核',     // Has conflicts or missing fields, needs manual review
-  CONFIRMED = '已确认',     // Manually reviewed and confirmed
-  REIMBURSED = '已报销',    // Reimbursement completed
-  NOT_REIMBURSED = '未报销', // Not yet reimbursed
+  UPLOADED = '已上传',
+  PROCESSING = '解析中',
+  PENDING = '待处理',
+  REVIEWING = '待确认',
+  CONFIRMED = '已确认',
+  REIMBURSED = '已报销',
+  NOT_REIMBURSED = '未报销',
 }
 
 // 🚨 新增：专门用于定义数组中每一行商品明细的类型
@@ -42,6 +42,7 @@ export interface Invoice {
 
   status: InvoiceStatus;
   owner: string | null;
+  reimbursement_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -121,61 +122,15 @@ export interface UploadResponse {
   message: string;
 }
 
-// LLM Configuration Types
-export interface LLMProviderInfo {
-  name: string;
-  display_name: string;
-  is_configured: boolean;
-  model: string | null;
-  base_url: string | null;
+// 用户个人信息（电子签名）
+export interface UserProfile {
+  id: number;
+  username: string;
+  full_name: string;
+  role: string;
+  department: string | null;
+  signature: string | null; // base64 PNG
 }
-
-export interface LLMStatusResponse {
-  is_configured: boolean;
-  active_provider: string | null;
-  active_provider_display: string | null;
-  configured_providers: string[];
-  available_providers: LLMProviderInfo[];
-}
-
-export interface LLMConfigRequest {
-  provider: string;
-  api_key: string;
-  model?: string;
-  base_url?: string;
-}
-
-export interface LLMConfigResponse {
-  success: boolean;
-  message: string;
-  provider: string | null;
-}
-
-export interface LLMTestResponse {
-  success: boolean;
-  provider: string;
-  provider_display: string;
-  message: string;
-  response: string;
-}
-
-// Model Registry Types
-export interface ModelInfo {
-  id: string;
-  name: string;
-  vision: boolean;
-  context_length?: number;
-  pricing?: {
-    prompt?: string;
-    completion?: string;
-  };
-}
-
-export interface ModelsResponse {
-  models: ModelInfo[];
-  source: 'openrouter' | 'fallback';
-}
-
 
 // 报销单状态枚举
 export enum ReimbursementStatus {
@@ -196,14 +151,34 @@ export interface Reimbursement {
   reviewer?: string;
   reject_reason?: string;
   status: ReimbursementStatus;
+  ai_risk_level?: string | null;
+  ai_reason?: string | null;
+  ai_review_detail?: any;
+  review_note?: string | null;
   created_at: string;
   updated_at: string;
-  invoices?: any[]; // 关联的发票列表
+  // 模拟打款凭证
+  payment_transaction_id?: string | null;
+  payment_time?: string | null;
+  payment_bank?: string | null;
+  bank_card_info?: string | null; // "工商银行 (尾号1234)"
+  reviewer_signature?: string | null; // 财务总监电子签名
+  borrowing_id?: number | null; // 关联借款申请
+  borrowing_info?: {  // 借款冲销详情
+    id: number;
+    title: string;
+    estimated_amount: number;
+    repaid_amount: number | null;
+    status: string;
+  } | null;
+  invoices?: Invoice[]; // 关联的发票列表（详情接口返回完整数据）
 }
-
 // 创建报销单的请求载荷
 export interface ReimbursementCreate {
   title: string;
   project_code?: string;
   invoice_ids: number[];
+  bank_card_id?: number;
+  application_id?: number;
+  borrowing_id?: number; // 关联借款申请
 }

@@ -17,6 +17,7 @@ from app.schemas.invoice import (
 from app.config import get_settings
 from app.services.audit_service import log_audit_no_commit, get_client_info
 from app.rate_limit import limiter
+from app.dependencies import get_current_user
 
 settings = get_settings()
 router = APIRouter()
@@ -54,7 +55,8 @@ async def upload_invoices(
         request: Request,
         background_tasks: BackgroundTasks,
         files: List[UploadFile] = File(...),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        current_user: dict = Depends(get_current_user),
 ):
     """上传发票文件 (支持多文件)，上传后异步触发OCR解析"""
     results = []
@@ -91,7 +93,9 @@ async def upload_invoices(
             file_name=file.filename or "unknown",
             file_type=ext,
             file_data=content,
-            status=InvoiceStatus.UPLOADED
+            status=InvoiceStatus.UPLOADED,
+            owner=current_user["username"],     # 旧字段（迁移过渡期）
+            owner_id=current_user["id"],        # 外键关联
         )
         db.add(invoice)
         await db.flush()
@@ -217,10 +221,15 @@ async def list_invoices(
         owner: Optional[str] = Query(None, description="归属人筛选"),
         start_date: Optional[str] = Query(None, description="开始日期"),
         end_date: Optional[str] = Query(None, description="结束日期"),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        current_user: dict = Depends(get_current_user),
 ):
-    """获取发票列表"""
+    """获取发票列表。管理员看全部，员工只看自己的。"""
     query = select(Invoice)
+
+    # 数据隔离：员工只能看归属于自己的发票（通过外键）
+    if current_user["role"] != "admin":
+        query = query.where(Invoice.owner_id == current_user["id"])
 
     # Apply filters
     if status:
@@ -871,6 +880,74 @@ async def confirm_invoice(
     await db.commit()
 
     return {"message": "发票已确认", "resolved_count": len(diffs)}
+
+
+@router.post("/auto-confirm")
+async def auto_confirm_invoices(
+    request: Request,
+    batch_request: BatchDeleteRequest,  # Reuse for invoice_ids
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """一键确认：自动确认所有无 OCR/LLM 冲突的「待确认」发票。"""
+    invoice_ids = batch_request.invoice_ids
+    if not invoice_ids:
+        raise HTTPException(status_code=400, detail="请选择要确认的发票")
+
+    query = select(Invoice).where(
+        Invoice.id.in_(invoice_ids),
+        Invoice.owner_id == current_user["id"],
+        Invoice.status == InvoiceStatus.REVIEWING,
+    )
+    result = await db.execute(query)
+    invoices = result.scalars().all()
+
+    confirmed_ids = []
+    need_manual_ids = []
+
+    for invoice in invoices:
+        # 检查是否有未解决的差异
+        diff_query = select(ParsingDiff).where(
+            ParsingDiff.invoice_id == invoice.id,
+            ParsingDiff.resolved == 0,
+        )
+        diff_result = await db.execute(diff_query)
+        unresolved_diffs = diff_result.scalars().all()
+
+        # 检查必填字段
+        critical_fields = [
+            "invoice_number", "issue_date", "total_with_tax",
+            "buyer_name", "seller_name",
+        ]
+        missing = [f for f in critical_fields if not getattr(invoice, f, None)]
+
+        if unresolved_diffs or missing:
+            need_manual_ids.append(invoice.id)
+            continue
+
+        # 无冲突、无缺失 → 自动确认
+        invoice.status = InvoiceStatus.CONFIRMED
+        confirmed_ids.append(invoice.id)
+
+        # 审计日志
+        client_info = get_client_info(request)
+        await log_audit_no_commit(
+            db=db,
+            entity_type="invoice",
+            entity_id=invoice.id,
+            action="auto_confirm",
+            new_value={"status": InvoiceStatus.CONFIRMED.value},
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+
+    await db.commit()
+
+    return {
+        "message": f"自动确认 {len(confirmed_ids)} 张发票",
+        "confirmed_ids": confirmed_ids,
+        "need_manual_ids": need_manual_ids,
+    }
 
 
 @router.get("/export/csv")

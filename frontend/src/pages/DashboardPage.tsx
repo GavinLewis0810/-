@@ -1,170 +1,202 @@
-import { useEffect, useState } from 'react';
-import { Row, Col, Card, Statistic, Empty } from 'antd';
+import { useEffect, useState, useRef } from 'react';
+import { Row, Col, Card, Statistic, Empty, Tag, List } from 'antd';
 import {
-  LineChartOutlined,
-  SafetyCertificateOutlined,
-  AccountBookOutlined,
-  FileDoneOutlined,
-  RobotOutlined
+  FileDoneOutlined, AccountBookOutlined, CheckCircleOutlined,
+  SafetyCertificateOutlined, RobotOutlined, ClockCircleOutlined,
 } from '@ant-design/icons';
-import { Column, Pie } from '@ant-design/plots';
-import api from '../services/api';
+import { Line, Pie, Bar } from '@ant-design/plots';
 import { getDashboardStats } from '../services/api';
+import { useNavigate } from 'react-router-dom';
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState({
-    invoiceCount: 0,
-    totalAmount: 0,
-    reimbursedAmount: 0,
-    aiRejectCount: 0,
-  });
-
-  // 全真图表数据状态
+  const navigate = useNavigate();
+  const [invoiceCount, setInvoiceCount] = useState(0);
+  const [totalAmount, setTotalAmount] = useState(0);
+  const [approvalRate, setApprovalRate] = useState(0);
+  const [aiRejectCount, setAiRejectCount] = useState(0);
   const [trendData, setTrendData] = useState<any[]>([]);
   const [pieData, setPieData] = useState<any[]>([]);
+  const [budgetData, setBudgetData] = useState<any[]>([]);
+  const [pendingList, setPendingList] = useState<any[]>([]);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 1. 抓取全真数据
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // 并发请求：基础发票统计 + 报销单图表统计
-        const [statRes, chartRes] = await Promise.all([
-          api.get('/invoices/statistics'),
-          getDashboardStats()
-        ]);
-
-        setStats({
-          invoiceCount: statRes.data.count || 0,
-          totalAmount: statRes.data.total_amount || 0,
-          reimbursedAmount: statRes.data.total_with_tax || 0,
-          aiRejectCount: chartRes.aiRejectCount || 0, // 真实的拦截数量
-        });
-
-        setTrendData(chartRes.trendData || []);
-        setPieData(chartRes.pieData || []);
-
-      } catch (error) {
-        console.error("获取真实统计数据失败", error);
-      }
-    };
-    fetchData();
-  }, []);
-
-  // 柱状图配置
-  const columnConfig = {
-    data: trendData,
-    xField: 'month',
-    yField: 'value',
-    seriesField: 'type',
-    isGroup: true,
-    color: ['#1677ff', '#52c41a', '#faad14'],
-    label: {
-      position: 'middle',
-      style: { fill: '#FFFFFF', opacity: 0.6 },
-    },
+  const fetchAll = async () => {
+    try {
+      const chartRes = await getDashboardStats();
+      setInvoiceCount(chartRes.reimbursedInvoiceCount || 0);
+      setTotalAmount(chartRes.totalReimbursedAmount || 0);
+      setApprovalRate(chartRes.approvalRate || 0);
+      setAiRejectCount(chartRes.aiRejectCount || 0);
+      setTrendData(chartRes.trendData || []);
+      setPieData(chartRes.pieData || []);
+      setBudgetData(chartRes.budgetData || []);
+      setPendingList(chartRes.pendingList || []);
+    } catch { /* silent */ }
   };
 
-  // V2版本饼图配置
+  useEffect(() => {
+    fetchAll();
+    timerRef.current = setInterval(fetchAll, 30000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  const lineConfig = {
+    data: trendData,
+    xField: 'month', yField: 'value', seriesField: 'type',
+    smooth: true, theme: 'dark' as const,
+    color: ['#E42313', '#1677ff', '#52c41a', '#faad14'],
+    legend: { layout: 'horizontal' as const, position: 'top' as const },
+    point: { size: 3 },
+  };
+
+  const budgetBarConfig = {
+    data: budgetData.map((b: any) => ({
+      name: b.project_name || b.project_code,
+      value: Number(b.usage_rate),
+    })),
+    xField: 'value', yField: 'name',
+    theme: 'dark' as const, maxBarWidth: 30,
+    color: (d: any) => d.value >= 100 ? '#E42313' : d.value >= 80 ? '#faad14' : '#22C55E',
+    label: { text: (d: any) => `${d.value}%`, style: { fontWeight: 'bold' as const } },
+    tooltip: { formatter: (d: any) => ({ name: '预算使用率', value: `${d.value}%` }) },
+  };
+
   const pieConfig = {
     data: pieData,
-    angleField: 'value',
-    colorField: 'type',
-    radius: 0.8,
-    innerRadius: 0.6,
-    label: {
-      text: 'value',
-      style: { fontWeight: 'bold', fontSize: 14 },
-    },
-    legend: {
-      color: { title: false, position: 'right', rowPadding: 5 },
-    },
+    angleField: 'value', colorField: 'type',
+    radius: 0.8, innerRadius: 0.65, theme: 'dark' as const,
+    color: ['#E42313', '#faad14', '#52c41a', '#1677ff'],
+    label: { text: 'value', style: { fontWeight: 'bold' as const, fontSize: 14 } },
+    legend: { layout: 'horizontal' as const, position: 'bottom' as const },
   };
 
   return (
-    <div style={{ padding: 24, background: '#f5f7fa', minHeight: '100vh' }}>
-      <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center' }}>
-        <RobotOutlined style={{ fontSize: 28, color: '#1677ff', marginRight: 12 }} />
-        <h2 style={{ margin: 0 }}>财务智能洞察中心 (AI Dashboard - 全真数据版)</h2>
+    <div style={{ padding: 24 }}>
+      <div style={{
+        background: '#0a0e27', borderRadius: 16, padding: 24,
+        boxShadow: '0 4px 24px rgba(0,0,0,0.15)',
+      }}>
+      {/* ====== 标题栏 ====== */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <RobotOutlined style={{ fontSize: 32, color: '#E42313' }} />
+          <div>
+            <h1 style={{ color: '#fff', margin: 0, fontSize: 24, fontWeight: 700 }}>财务智能决策驾驶舱</h1>
+            <p style={{ color: 'rgba(255,255,255,0.45)', margin: '4px 0 0', fontSize: 13 }}>Financial AI Decision Cockpit · 数据每 30 秒自动刷新</p>
+          </div>
+        </div>
+        <Tag color="processing" style={{ fontSize: 13, padding: '4px 12px' }}>
+          <ClockCircleOutlined /> 实时监控中
+        </Tag>
       </div>
 
-      <Row gutter={[16, 16]}>
+      {/* ====== 顶部 KPI 卡片 ====== */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col span={6}>
-          <Card bordered={false} style={{ borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-            <Statistic
-              title="系统累计处理发票"
-              value={stats.invoiceCount}
-              suffix="张"
-              prefix={<FileDoneOutlined style={{ color: '#1677ff' }} />}
-            />
+          <Card style={{ background: 'linear-gradient(135deg, #1677ff 0%, #0958d9 100%)', border: 'none', borderRadius: 10 }}>
+            <Statistic title={<span style={{ color: 'rgba(255,255,255,0.75)' }}>累计处理发票</span>}
+              value={invoiceCount} suffix="张"
+              valueStyle={{ color: '#fff', fontSize: 36, fontWeight: 700 }}
+              prefix={<FileDoneOutlined style={{ color: 'rgba(255,255,255,0.6)', marginRight: 8 }} />} />
           </Card>
         </Col>
         <Col span={6}>
-          <Card bordered={false} style={{ borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-            <Statistic
-              title="发票总金额 (系统入账)"
-              value={stats.totalAmount}
-              precision={2}
-              prefix={<AccountBookOutlined style={{ color: '#faad14' }} />}
-            />
+          <Card style={{ background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)', border: 'none', borderRadius: 10 }}>
+            <Statistic title={<span style={{ color: 'rgba(255,255,255,0.75)' }}>报销总金额</span>}
+              value={totalAmount} precision={2}
+              valueStyle={{ color: '#fff', fontSize: 36, fontWeight: 700 }}
+              prefix={<AccountBookOutlined style={{ color: 'rgba(255,255,255,0.6)', marginRight: 8 }} />}
+              suffix={<span style={{ fontSize: 20, color: 'rgba(255,255,255,0.7)' }}>¥</span>} />
           </Card>
         </Col>
         <Col span={6}>
-          <Card bordered={false} style={{ borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-            <Statistic
-              title="已锁定打款金额"
-              value={stats.reimbursedAmount}
-              precision={2}
-              prefix={<LineChartOutlined style={{ color: '#52c41a' }} />}
-            />
+          <Card style={{ background: 'linear-gradient(135deg, #faad14 0%, #d48806 100%)', border: 'none', borderRadius: 10 }}>
+            <Statistic title={<span style={{ color: 'rgba(255,255,255,0.75)' }}>审批通过率</span>}
+              value={approvalRate} suffix="%" precision={1}
+              valueStyle={{ color: '#fff', fontSize: 36, fontWeight: 700 }}
+              prefix={<CheckCircleOutlined style={{ color: 'rgba(255,255,255,0.6)', marginRight: 8 }} />} />
           </Card>
         </Col>
         <Col span={6}>
-          <Card bordered={false} style={{ borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.04)', background: '#fff1f0' }}>
-            <Statistic
-              title="大模型真实拦截高危单"
-              value={stats.aiRejectCount}
-              suffix="单"
-              valueStyle={{ color: '#cf1322', fontWeight: 'bold' }}
-              prefix={<SafetyCertificateOutlined />}
-            />
+          <Card style={{ background: 'linear-gradient(135deg, #E42313 0%, #a8071a 100%)', border: 'none', borderRadius: 10 }}>
+            <Statistic title={<span style={{ color: 'rgba(255,255,255,0.75)' }}>AI 拦截高风险单</span>}
+              value={aiRejectCount} suffix="单"
+              valueStyle={{ color: '#fff', fontSize: 36, fontWeight: 700 }}
+              prefix={<SafetyCertificateOutlined style={{ color: 'rgba(255,255,255,0.6)', marginRight: 8 }} />} />
           </Card>
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 24 }}>
+      {/* ====== 中排：趋势折线 + 预算排行 ====== */}
+      <Row gutter={[16, 16]}>
         <Col span={14}>
-          <Card
-            title="各项目报销金额趋势 (实时聚合)"
-            bordered={false}
-            style={{ borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
-          >
-            <div style={{ height: 350 }}>
-              {trendData.length > 0 ? (
-                /* 安全的写法：用 as any 绕过严苛的类型检查，不留任何注释标记 */
-                <Column {...(columnConfig as any)} />
-              ) : (
-                <Empty description="暂无真实的报销记录" style={{ marginTop: 100 }} />
-              )}
+          <Card title={<span style={{ color: '#fff' }}>📈 近 12 个月报销金额趋势</span>}
+            style={{ background: '#111633', border: 'none', borderRadius: 10 }}
+            headStyle={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}>
+            <div style={{ height: 320 }}>
+              {trendData.length > 0 ? <Line {...(lineConfig as any)} />
+                : <Empty description={<span style={{ color: '#999' }}>暂无数据</span>} image={Empty.PRESENTED_IMAGE_SIMPLE} />}
             </div>
           </Card>
         </Col>
         <Col span={10}>
-          <Card
-            title={<span><RobotOutlined style={{color: '#cf1322'}}/> AI 风险评级雷达 (实时打标)</span>}
-            bordered={false}
-            style={{ borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
-          >
-            <div style={{ height: 350 }}>
-              {pieData.length > 0 ? (
-                /* 安全的写法 */
-                <Pie {...(pieConfig as any)} />
+          <Card title={<span style={{ color: '#fff' }}>💰 项目预算消耗排行</span>}
+            style={{ background: '#111633', border: 'none', borderRadius: 10 }}
+            headStyle={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}>
+            <div style={{ height: 320 }}>
+              {budgetData.length > 0 ? <Bar {...(budgetBarConfig as any)} />
+                : <Empty description={<span style={{ color: '#999' }}>暂无项目数据</span>} image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* ====== 底排：风险饼图 + 待审批列表 ====== */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col span={10}>
+          <Card title={<span style={{ color: '#fff' }}><SafetyCertificateOutlined style={{ color: '#E42313' }} /> AI 风险评级分布</span>}
+            style={{ background: '#111633', border: 'none', borderRadius: 10 }}
+            headStyle={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}>
+            <div style={{ height: 300 }}>
+              {pieData.length > 0 ? <Pie {...(pieConfig as any)} />
+                : <Empty description={<span style={{ color: '#999' }}>暂无审查数据</span>} image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            </div>
+          </Card>
+        </Col>
+        <Col span={14}>
+          <Card title={<span style={{ color: '#fff' }}>📋 待审批报销单 <Tag color="warning">{pendingList.length} 笔</Tag></span>}
+            style={{ background: '#111633', border: 'none', borderRadius: 10 }}
+            headStyle={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}
+            bodyStyle={{ padding: 0 }}>
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {pendingList.length === 0 ? (
+                <Empty description={<span style={{ color: '#999' }}>暂无待审批报销单</span>} image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: '40px 0' }} />
               ) : (
-                <Empty description="暂无 AI 审查记录" style={{ marginTop: 100 }} />
+                <List
+                  dataSource={pendingList}
+                  renderItem={(item: any) => (
+                    <List.Item
+                      onClick={() => navigate(`/reimbursements/${item.id}`)}
+                      style={{ padding: '12px 20px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(228,35,19,0.1)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <List.Item.Meta
+                        title={<span style={{ color: '#fff', fontWeight: 500 }}>#{item.id} {item.title}</span>}
+                        description={<span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>
+                          {item.submitter} · {item.created_at ? new Date(item.created_at).toLocaleString() : ''}
+                        </span>}
+                      />
+                      <Tag color="warning" style={{ fontWeight: 600 }}>¥{Number(item.amount).toFixed(2)}</Tag>
+                    </List.Item>
+                  )}
+                />
               )}
             </div>
           </Card>
         </Col>
       </Row>
+      </div>
     </div>
   );
 }

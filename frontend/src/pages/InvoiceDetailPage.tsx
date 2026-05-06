@@ -46,14 +46,14 @@ const fieldLabels: Record<string, string> = {
 
 // 💡 商品明细表格的列定义
 const itemColumns = [
-  { title: '项目名称', dataIndex: 'item_name', key: 'item_name' },
-  { title: '规格型号', dataIndex: 'specification', key: 'specification' },
-  { title: '单位', dataIndex: 'unit', key: 'unit' },
-  { title: '数量', dataIndex: 'quantity', key: 'quantity' },
-  { title: '单价', dataIndex: 'unit_price', key: 'unit_price' },
-  { title: '金额', dataIndex: 'amount', key: 'amount' },
-  { title: '税率', dataIndex: 'tax_rate', key: 'tax_rate' },
-  { title: '税额', dataIndex: 'tax_amount', key: 'tax_amount' },
+  { title: '项目名称', dataIndex: 'item_name', key: 'item_name', render: (v: any) => v || '-' },
+  { title: '规格型号', dataIndex: 'specification', key: 'specification', render: (v: any) => v || '-' },
+  { title: '单位', dataIndex: 'unit', key: 'unit', render: (v: any) => v || '-' },
+  { title: '数量', dataIndex: 'quantity', key: 'quantity', render: (v: any) => v || '-' },
+  { title: '单价', dataIndex: 'unit_price', key: 'unit_price', render: (v: any) => v || '-' },
+  { title: '金额', dataIndex: 'amount', key: 'amount', render: (v: any) => v || '-' },
+  { title: '税率', dataIndex: 'tax_rate', key: 'tax_rate', render: (v: any) => v || '-' },
+  { title: '税额', dataIndex: 'tax_amount', key: 'tax_amount', render: (v: any) => v || '-' },
 ];
 
 function InvoiceDetailPage() {

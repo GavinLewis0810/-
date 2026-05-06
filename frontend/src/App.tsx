@@ -1,66 +1,111 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import UploadPage from './pages/UploadPage';
 import InvoiceListPage from './pages/InvoiceListPage';
 import InvoiceDetailPage from './pages/InvoiceDetailPage';
-import LLMConfigModal from './components/LLMConfigModal';
 import { MainLayout } from './components/layout';
-import { getLLMStatus } from './services/api';
 import ReimbursementListPage from './pages/ReimbursementListPage';
-// 🚀 新增：引入 Dashboard 页面
 import DashboardPage from './pages/DashboardPage';
+import UserManagementPage from './pages/UserManagementPage';
+import ReimbursementDetailPage from './pages/ReimbursementDetailPage';
+import ProjectManagementPage from './pages/ProjectManagementPage';
+import BankCardPage from './pages/BankCardPage';
+import ApplicationPage from './pages/ApplicationPage';
+import RuleEnginePage from './pages/RuleEnginePage';
+import ProfilePage from './pages/ProfilePage';
+import BorrowingPage from './pages/BorrowingPage';
+import AuthPage from './pages/AuthPage';
 
 function AppContent() {
-  const [llmConfigOpen, setLlmConfigOpen] = useState(false);
-  const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null);
-  const [showLlmPromo, setShowLlmPromo] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // Check LLM status on app load
   useEffect(() => {
-    const checkLLMStatus = async () => {
+    const initAuth = async () => {
+      const token = localStorage.getItem('sessionToken');
+      if (!token) {
+        localStorage.removeItem('currentUser');
+        return;
+      }
+
       try {
-        const status = await getLLMStatus();
-        setLlmConfigured(status.is_configured);
-        // Show promotion banner if LLM is not configured (non-blocking)
-        if (!status.is_configured) {
-          setShowLlmPromo(true);
-        }
-      } catch (error) {
-        console.error('Failed to check LLM status:', error);
-        // If check fails, assume not configured
-        setLlmConfigured(false);
-        setShowLlmPromo(true);
+        const res = await fetch('/api/auth/me', {
+          headers: { 'X-Session-Token': token },
+        });
+        if (!res.ok) throw new Error('session expired');
+        const data = await res.json();
+        setCurrentUser(data.user);
+        localStorage.setItem('currentUser', JSON.stringify(data.user));
+      } catch {
+        localStorage.removeItem('sessionToken');
+        localStorage.removeItem('currentUser');
       }
     };
-    checkLLMStatus();
+
+    initAuth();
   }, []);
 
-  const handleLLMConfigured = () => {
-    setLlmConfigured(true);
-    setShowLlmPromo(false);
+  const handleLoginSuccess = (user: any) => {
+    localStorage.setItem('currentUser', JSON.stringify(user));
+    setCurrentUser(user);
   };
+
+  const handleLogout = () => {
+    localStorage.removeItem('sessionToken');
+    localStorage.removeItem('currentUser');
+    setCurrentUser(null);
+  };
+
+  const handleUserUpdate = (user: any) => {
+    setCurrentUser(user);
+    localStorage.setItem('currentUser', JSON.stringify(user));
+  };
+
+  if (!currentUser) {
+    return <AuthPage onLoginSuccess={handleLoginSuccess} />;
+  }
 
   return (
     <MainLayout
-      llmConfigured={llmConfigured}
-      showLlmPromo={showLlmPromo}
-      onOpenLLMConfig={() => setLlmConfigOpen(true)}
-      onCloseLLMPromo={() => setShowLlmPromo(false)}
+      currentUser={currentUser}
+      onLogout={handleLogout}
     >
       <Routes>
-        <Route path="/" element={<InvoiceListPage />} />
+        <Route path="/" element={currentUser.role === 'admin' ? <Navigate to="/dashboard" replace /> : <InvoiceListPage />} />
+        <Route path="/invoices" element={<InvoiceListPage />} />
         <Route path="/upload" element={<UploadPage />} />
+        <Route path="/profile" element={<ProfilePage currentUser={currentUser} onUserUpdate={handleUserUpdate} />} />
+        <Route path="/borrowings" element={<BorrowingPage />} />
         <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
         <Route path="/reimbursements" element={<ReimbursementListPage />} />
-        {/* 🚀 新增：挂载大屏路由 */}
-        <Route path="/dashboard" element={<DashboardPage />} />
-      </Routes>
+        <Route path="/reimbursements/:id" element={<ReimbursementDetailPage />} />
+        {currentUser.role !== 'admin' ? (
+          <Route path="/bank-cards" element={<BankCardPage />} />
+        ) : (
+          <Route path="/bank-cards" element={<Navigate to="/" replace />} />
+        )}
+        <Route path="/applications" element={<ApplicationPage />} />
 
-      <LLMConfigModal
-        open={llmConfigOpen}
-        onClose={() => setLlmConfigOpen(false)}
-        onConfigured={handleLLMConfigured}
-      />
+        {currentUser.role === 'admin' ? (
+          <Route path="/dashboard" element={<DashboardPage />} />
+        ) : (
+           <Route path="/dashboard" element={<Navigate to="/" replace />} />
+        )}
+        {currentUser.role === 'admin' ? (
+          <Route path="/users" element={<UserManagementPage />} />
+        ) : (
+           <Route path="/users" element={<Navigate to="/" replace />} />
+        )}
+        {currentUser.role === 'admin' ? (
+          <Route path="/projects" element={<ProjectManagementPage />} />
+        ) : (
+           <Route path="/projects" element={<Navigate to="/" replace />} />
+        )}
+        {currentUser.role === 'admin' ? (
+          <Route path="/approval-rules" element={<RuleEnginePage />} />
+        ) : (
+           <Route path="/approval-rules" element={<Navigate to="/" replace />} />
+        )}
+      </Routes>
     </MainLayout>
   );
 }

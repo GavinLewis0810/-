@@ -213,7 +213,7 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
 
         needs_review = has_conflicts or missing_critical
 
-        # 🚨 终极修改：无论机器觉得多完美，一律强制设为“待审核”，交由人工在前端确认！
+        # 🚨 无论机器觉得多完美，一律强制设为”待确认”，交由员工在前端确认！
         invoice.status = InvoiceStatus.REVIEWING
 
         await db.commit()
