@@ -17,6 +17,8 @@ from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 from app.models.project import Project
 from app.models.application import Application, ApplicationStatus
+from app.models.bank_card import BankCard
+from app.models.transaction import Transaction
 from app.schemas.reimbursement import ReimbursementCreate, ReimbursementResponse, ReimbursementReview
 from app.services.reimbursement_service import delete_reimbursement_logic
 from app.services.audit_service import log_audit_no_commit, get_client_info
@@ -63,9 +65,11 @@ async def create_reimbursement(
         bank_card_id=data.bank_card_id,
         application_id=data.application_id,
         borrowing_id=data.borrowing_id,
+        reason_category_id=reason_category_id,
         status=ReimbursementStatus.SUBMITTED
     )
     # 关联申请单校验：归属 + 状态 + 剩余额度
+    reason_category_id = data.reason_category_id
     if data.application_id:
         app = await db.get(Application, data.application_id)
         if not app:
@@ -74,6 +78,10 @@ async def create_reimbursement(
             raise HTTPException(status_code=400, detail="申请单不属于您")
         if app.status != ApplicationStatus.APPROVED:
             raise HTTPException(status_code=400, detail="只能关联状态为「已通过」的事前申请单")
+
+        # 自动继承申请单的事由类别
+        if app.reason_category_id and not reason_category_id:
+            reason_category_id = app.reason_category_id
 
         # 计算该申请单已被占用的额度（已通过+已打款的报销单）
         app_used = await db.scalar(
@@ -691,6 +699,7 @@ async def complete_reimbursement(
     )
 
     # 自动冲销关联借款
+    borrowing = None
     if reimb.borrowing_id:
         from app.models.borrowing import Borrowing, BorrowingStatus
         b_query = select(Borrowing).where(Borrowing.id == reimb.borrowing_id)
@@ -742,6 +751,60 @@ async def complete_reimbursement(
                     entity_type="borrowing",
                     entity_id=borrowing.id,
                 ))
+
+    # 银行卡余额变动
+    card = reimb.bank_card
+    if not card and reimb.submitter_id:
+        card = (await db.execute(
+            select(BankCard).where(BankCard.user_id == reimb.submitter_id)
+        )).scalars().first()
+
+    if card:
+        reimb_amt = float(reimb.total_amount or 0)
+        # 如果有关联借款，实际需补打款 = 报销金额 - 借款金额（借款已提前拨付）
+        # 如果无借款，直接打款报销全额
+        if reimb.borrowing_id and borrowing:
+            borrow_amt = float(borrowing.estimated_amount)
+            borrow_repaid = float(borrowing.repaid_amount or 0)
+            if reimb_amt > borrow_amt:
+                # 报销超出借款，补差额
+                diff = Decimal(str(reimb_amt - borrow_amt))
+                balance_before = card.balance
+                card.balance = Decimal(str(card.balance)) + diff
+                db.add(Transaction(
+                    type="报销到账",
+                    amount=diff,
+                    bank_card_id=card.id,
+                    reimbursement_id=reimb.id,
+                    borrowing_id=reimb.borrowing_id,
+                    balance_before=balance_before,
+                    balance_after=card.balance,
+                    note=f"报销单「{reimb.title}」补差到账（报销{reimb_amt:.2f}，借款冲销{borrow_amt:.2f}）",
+                ))
+            # 借款冲销流水（不论是否超额，都要记录）
+            db.add(Transaction(
+                type="借款冲销",
+                amount=Decimal(str(-borrow_repaid)),
+                bank_card_id=card.id,
+                reimbursement_id=reimb.id,
+                borrowing_id=reimb.borrowing_id,
+                balance_before=card.balance,
+                balance_after=card.balance,
+                note=f"借款「{borrowing.title}」被报销单「{reimb.title}」冲销 ¥{borrow_repaid:.2f}",
+            ))
+        else:
+            # 无借款关联，直接打款
+            balance_before = card.balance
+            card.balance = Decimal(str(card.balance)) + Decimal(str(reimb.total_amount or 0))
+            db.add(Transaction(
+                type="报销到账",
+                amount=reimb.total_amount,
+                bank_card_id=card.id,
+                reimbursement_id=reimb.id,
+                balance_before=balance_before,
+                balance_after=card.balance,
+                note=f"报销单「{reimb.title}」全额到账",
+            ))
 
     await db.commit()
     await db.refresh(reimb)

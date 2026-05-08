@@ -11,6 +11,7 @@ class ReimbursementCreate(BaseModel):
     bank_card_id: Optional[int] = Field(None, description="收款银行卡 ID")
     application_id: Optional[int] = Field(None, description="事前申请单 ID")
     borrowing_id: Optional[int] = Field(None, description="关联借款申请 ID（用于冲销）")
+    reason_category_id: Optional[int] = Field(None, description="事由类别 ID")
 
 class ReimbursementResponse(BaseModel):
     id: int

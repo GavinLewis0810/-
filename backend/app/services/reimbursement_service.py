@@ -1,10 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from app.models.reimbursement import Reimbursement
 from app.models.invoice import InvoiceStatus
 from app.models.notification import Notification
+from app.models.borrowing import Borrowing
+from app.models.transaction import Transaction
 
 
 async def delete_reimbursement_logic(
@@ -12,7 +14,7 @@ async def delete_reimbursement_logic(
     db: AsyncSession,
     deleted_by_username: str = "管理员",
 ) -> bool:
-    """删除报销单，释放关联发票，并发通知给提交人。"""
+    """删除报销单，释放关联发票，解除借款/交易关联，并发通知给提交人。"""
     query = select(Reimbursement).options(selectinload(Reimbursement.invoices)).where(Reimbursement.id == reimb_id)
     result = await db.execute(query)
     reimb = result.scalar_one_or_none()
@@ -22,6 +24,15 @@ async def delete_reimbursement_logic(
 
     submitter_id = reimb.submitter_id
     reimb_title = reimb.title
+
+    # 解除关联借款的冲销引用
+    await db.execute(
+        update(Borrowing).where(Borrowing.reimbursement_id == reimb_id).values(reimbursement_id=None)
+    )
+    # 解除关联交易流水的引用
+    await db.execute(
+        update(Transaction).where(Transaction.reimbursement_id == reimb_id).values(reimbursement_id=None)
+    )
 
     # 释放绑定的发票
     for inv in reimb.invoices:

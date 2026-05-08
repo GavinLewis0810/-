@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 # 🚀 1. 在这里导入 auth 路由
-from app.routers import invoices, settings, reimbursements, auth, admin, notifications, projects, bank_cards, applications, approval_rules, borrowings
+from app.routers import invoices, settings, reimbursements, auth, admin, notifications, projects, bank_cards, applications, approval_rules, borrowings, reason_categories
 
 from app.config import get_settings
 from app.routers import health, invoices, settings as settings_router
@@ -61,6 +61,7 @@ app.include_router(bank_cards.router, prefix="/api/bank-cards", tags=["BankCards
 app.include_router(applications.router, prefix="/api/applications", tags=["Applications"])
 app.include_router(approval_rules.router, prefix="/api/approval-rules", tags=["ApprovalRules"])
 app.include_router(borrowings.router, prefix="/api/borrowings", tags=["Borrowings"])
+app.include_router(reason_categories.router, prefix="/api/reason-categories", tags=["ReasonCategories"])
 
 
 # 🚀 3. 终极改造：系统冷启动时自动建表 + 植入超级管理员
@@ -157,6 +158,33 @@ async def startup():
             # 外键迁移：新列
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS submitter_id INTEGER REFERENCES users(id)",
+            # 银行卡余额
+            "ALTER TABLE bank_cards ADD COLUMN IF NOT EXISTS balance NUMERIC(12,2) DEFAULT 0",
+            # 事由类别字典表
+            "CREATE TABLE IF NOT EXISTS reason_categories ("
+            " id SERIAL PRIMARY KEY,"
+            " name VARCHAR(255) NOT NULL UNIQUE,"
+            " sort_order INTEGER DEFAULT 0,"
+            " is_active BOOLEAN DEFAULT TRUE,"
+            " created_at TIMESTAMP DEFAULT NOW()"
+            ")",
+            # 三张表补齐 reason_category_id 外键列
+            "ALTER TABLE applications ADD COLUMN IF NOT EXISTS reason_category_id INTEGER REFERENCES reason_categories(id)",
+            "ALTER TABLE borrowings ADD COLUMN IF NOT EXISTS reason_category_id INTEGER REFERENCES reason_categories(id)",
+            "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS reason_category_id INTEGER REFERENCES reason_categories(id)",
+            # 交易流水表
+            "CREATE TABLE IF NOT EXISTS transactions ("
+            " id SERIAL PRIMARY KEY,"
+            " type VARCHAR(20) NOT NULL,"
+            " amount NUMERIC(12,2) NOT NULL,"
+            " bank_card_id INTEGER REFERENCES bank_cards(id),"
+            " borrowing_id INTEGER REFERENCES borrowings(id),"
+            " reimbursement_id INTEGER REFERENCES reimbursements(id),"
+            " balance_before NUMERIC(12,2) NOT NULL,"
+            " balance_after NUMERIC(12,2) NOT NULL,"
+            " note VARCHAR(300),"
+            " created_at TIMESTAMP DEFAULT NOW()"
+            ")",
         ]
         for sql in migration_sqls:
             try:
@@ -203,6 +231,24 @@ async def startup():
                 print("✅ 已植入默认规则：小额低风险秒批")
         except Exception as e:
             print(f"⚠️ 默认规则跳过: {e}")
+
+        # --- 植入默认事由类别 ---
+        try:
+            existing = await conn.execute(text("SELECT COUNT(*) FROM reason_categories"))
+            if existing.scalar() == 0:
+                categories = [
+                    ("差旅费", 1), ("办公用品采购", 2), ("会议费", 3),
+                    ("招待费", 4), ("培训费", 5), ("交通费", 6),
+                    ("印刷费", 7), ("通讯费", 8), ("设备维修", 9),
+                    ("其他费用", 10),
+                ]
+                for name, sort_order in categories:
+                    await conn.execute(text(
+                        "INSERT INTO reason_categories (name, sort_order) VALUES (:name, :sort_order)"
+                    ), {"name": name, "sort_order": sort_order})
+                print("✅ 已植入默认事由类别（10 条）")
+        except Exception as e:
+            print(f"⚠️ 默认事由类别跳过: {e}")
 
     # 2. 自动检查并创建初始超级管理员
     async with AsyncSession(engine) as db:

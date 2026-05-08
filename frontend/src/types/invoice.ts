@@ -181,4 +181,5 @@ export interface ReimbursementCreate {
   bank_card_id?: number;
   application_id?: number;
   borrowing_id?: number; // 关联借款申请
+  reason_category_id?: number;
 }

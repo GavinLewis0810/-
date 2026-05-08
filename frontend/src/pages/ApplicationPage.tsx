@@ -2,17 +2,19 @@ import { useState, useEffect, useRef } from 'react';
 import { Table, Button, Space, message, Modal, Input, InputNumber, Tag, Popconfirm, Progress, Select, DatePicker } from 'antd';
 import { PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, DollarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { getApplications, createApplication, approveApplication, rejectApplication, deleteApplication, getProjects, createBorrowing, ApplicationItem } from '../services/api';
+import { getApplications, createApplication, approveApplication, rejectApplication, deleteApplication, getProjects, createBorrowing, getReasonCategories, ApplicationItem, ReasonCategory } from '../services/api';
 
 export default function ApplicationPage() {
   const [apps, setApps] = useState<ApplicationItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
   const [amount, setAmount] = useState<number>(0);
   const [projectCode, setProjectCode] = useState<string | undefined>(undefined);
   const [projectList, setProjectList] = useState<{ code: string; name: string; remaining: number }[]>([]);
+  const [reasonCategories, setReasonCategories] = useState<ReasonCategory[]>([]);
+  const [reasonCategory, setReasonCategory] = useState<string>('');
+  const [reasonDetail, setReasonDetail] = useState('');
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   // 拨款弹窗（管理员专用）
@@ -23,7 +25,7 @@ export default function ApplicationPage() {
   const [disburseDate, setDisburseDate] = useState<string | null>(null);
   const [disburseSubmitting, setDisburseSubmitting] = useState(false);
 
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const s = localStorage.getItem('currentUser');
@@ -31,6 +33,7 @@ export default function ApplicationPage() {
     getProjects().then(ps => setProjectList(ps.map(p => ({
       code: p.project_code, name: p.project_name, remaining: Number(p.remaining),
     })))).catch(() => {});
+    getReasonCategories().then(rcs => setReasonCategories(rcs)).catch(() => {});
   }, []);
 
   const fetch = async (silent = false) => {
@@ -50,11 +53,18 @@ export default function ApplicationPage() {
   const isAdmin = currentUser?.role === 'admin';
 
   const handleCreate = async () => {
-    if (!title.trim()) { message.warning('请输入申请事由'); return; }
+    if (!reasonCategory) { message.warning('请选择申请事由类别'); return; }
+    const fullTitle = reasonCategory + (reasonDetail.trim() ? `-${reasonDetail.trim()}` : '');
+    const selectedRc = reasonCategories.find(rc => rc.name === reasonCategory);
     try {
-      await createApplication({ title, description: desc, estimated_amount: amount, project_code: projectCode || undefined });
+      await createApplication({
+        title: fullTitle, description: desc, estimated_amount: amount,
+        project_code: projectCode || undefined,
+        reason_category_id: selectedRc?.id,
+      });
       message.success('申请已提交');
-      setModalOpen(false); setTitle(''); setDesc(''); setAmount(0); setProjectCode(undefined);
+      setModalOpen(false);
+      setReasonCategory(''); setReasonDetail(''); setDesc(''); setAmount(0); setProjectCode(undefined);
       fetch();
     } catch (e: any) { message.error(e.response?.data?.detail || '提交失败'); }
   };
@@ -69,13 +79,11 @@ export default function ApplicationPage() {
   };
 
   const handleDisburseSubmit = async () => {
-    if (!disburseTitle.trim()) { message.warning('请输入拨款事由'); return; }
     if (!disburseAmount || disburseAmount <= 0) { message.warning('请输入有效的拨款金额'); return; }
     if (!disburseAppId) return;
     setDisburseSubmitting(true);
     try {
       await createBorrowing({
-        title: disburseTitle.trim(),
         estimated_amount: disburseAmount,
         expected_repayment_date: disburseDate || undefined,
         application_id: disburseAppId,
@@ -90,11 +98,11 @@ export default function ApplicationPage() {
 
   const columns: ColumnsType<ApplicationItem> = [
     { title: '编号', dataIndex: 'id', key: 'id', width: 70 },
-    { title: '申请事由', dataIndex: 'title', key: 'title', width: 160, ellipsis: true },
+    { title: '申请事由', dataIndex: 'title', key: 'title', width: 130, ellipsis: true },
     ...(isAdmin ? [{ title: '申请人', dataIndex: 'user_name', key: 'user_name', width: 80 }] : []),
-    { title: '关联项目', dataIndex: 'project_name', key: 'project_name', width: 110,
+    { title: '关联项目', dataIndex: 'project_name', key: 'project_name', width: 400, ellipsis: true,
       render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <span style={{ color: '#ccc' }}>-</span> },
-    { title: '预估金额', dataIndex: 'estimated_amount', key: 'estimated_amount', width: 180, align: 'right' as const,
+    { title: '预估金额', dataIndex: 'estimated_amount', key: 'estimated_amount', width: 170, align: 'right' as const,
       render: (v: number, r: ApplicationItem) => {
         const used = r.used_amount || 0;
         if (r.status === '已通过' && v > 0) {
@@ -119,10 +127,10 @@ export default function ApplicationPage() {
       } },
     { title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (s: string) => <Tag color={s === '已通过' ? 'success' : s === '已驳回' ? 'error' : 'warning'}>{s}</Tag> },
-    ...(isAdmin ? [{ title: '驳回理由', dataIndex: 'reject_reason', key: 'reject_reason', ellipsis: true, render: (v:string) => v || '-' }] : []),
-    { title: '提交时间', dataIndex: 'created_at', key: 'created_at', width: 160,
+    ...(isAdmin ? [{ title: '驳回理由', dataIndex: 'reject_reason', key: 'reject_reason', width: 100, ellipsis: true, render: (v:string) => v || '-' }] : []),
+    { title: '提交时间', dataIndex: 'created_at', key: 'created_at', width: 150,
       render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
-    { title: '操作', key: 'action', width: isAdmin ? 240 : 110,
+    { title: '操作', key: 'action', width: isAdmin ? 210 : 90,
       render: (_, r) => (
         <Space size="small">
           {isAdmin && r.status === '待审批' && (
@@ -185,7 +193,24 @@ export default function ApplicationPage() {
 
       <Modal title="新建事前申请" open={modalOpen} onOk={handleCreate} onCancel={() => setModalOpen(false)} okText="提交" cancelText="取消">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16 }}>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="申请事由（如：出差 - 北京客户拜访）" />
+          <div>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>申请事由</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Select
+                value={reasonCategory || undefined}
+                onChange={(v) => setReasonCategory(v)}
+                placeholder="选择事由类别"
+                style={{ flex: '0 0 160px' }}
+                options={reasonCategories.map(rc => ({ value: rc.name, label: rc.name }))}
+              />
+              <Input
+                value={reasonDetail}
+                onChange={(e) => setReasonDetail(e.target.value)}
+                placeholder="具体描述（如：北京客户拜访）"
+                style={{ flex: 1 }}
+              />
+            </div>
+          </div>
           <Select
             value={projectCode}
             onChange={(v) => setProjectCode(v)}
@@ -226,7 +251,9 @@ export default function ApplicationPage() {
                 )}
                 <div>
                   <div style={{ marginBottom: 4, fontWeight: 500 }}>拨款事由</div>
-                  <Input value={disburseTitle} onChange={e => setDisburseTitle(e.target.value)} />
+                  <div style={{ padding: '4px 11px', background: '#f5f5f5', borderRadius: 6, border: '1px solid #d9d9d9', color: '#666' }}>
+                    {disburseTitle}
+                  </div>
                 </div>
                 <div>
                   <div style={{ marginBottom: 4, fontWeight: 500 }}>拨款金额（剩余额度 ¥{rem.toFixed(2)}）</div>

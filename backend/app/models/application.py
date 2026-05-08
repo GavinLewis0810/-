@@ -26,9 +26,11 @@ class Application(Base):
     status = Column(SQLEnum(ApplicationStatus), default=ApplicationStatus.SUBMITTED, nullable=False)
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     reject_reason = Column(Text, nullable=True)
+    reason_category_id = Column(Integer, ForeignKey("reason_categories.id"), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     user = relationship("User", foreign_keys=[user_id])
     approver = relationship("User", foreign_keys=[approved_by])
+    reason_category = relationship("ReasonCategory")

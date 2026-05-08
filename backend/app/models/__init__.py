@@ -7,3 +7,5 @@ from app.models.project import Project
 from app.models.bank_card import BankCard
 from app.models.application import Application
 from app.models.borrowing import Borrowing
+from app.models.transaction import Transaction
+from app.models.reason_category import ReasonCategory

@@ -394,6 +394,7 @@ export interface BankCardItem {
   account_name: string;
   card_number: string;
   is_default: boolean;
+  balance: number;
 }
 
 export const getBankCards = async (): Promise<BankCardItem[]> => {
@@ -414,6 +415,23 @@ export const deleteBankCard = async (id: number): Promise<void> => {
   await api.delete(`/bank-cards/${id}`);
 };
 
+export interface TransactionItem {
+  id: number;
+  type: string;
+  amount: number;
+  borrowing_id: number | null;
+  reimbursement_id: number | null;
+  balance_before: number;
+  balance_after: number;
+  note: string | null;
+  created_at: string;
+}
+
+export const getTransactions = async (): Promise<TransactionItem[]> => {
+  const response = await api.get('/bank-cards/transactions');
+  return response.data;
+};
+
 // ========== 事前申请单 ==========
 
 export interface ApplicationItem {
@@ -427,6 +445,7 @@ export interface ApplicationItem {
   status: string;
   reject_reason: string | null;
   user_name: string | null;
+  reason_category_id: number | null;
   created_at: string;
 }
 
@@ -435,7 +454,7 @@ export const getApplications = async (): Promise<ApplicationItem[]> => {
   return response.data;
 };
 
-export const createApplication = async (data: { title: string; description: string; estimated_amount: number; project_code?: string }): Promise<ApplicationItem> => {
+export const createApplication = async (data: { title: string; description: string; estimated_amount: number; project_code?: string; reason_category_id?: number }): Promise<ApplicationItem> => {
   const response = await api.post('/applications', data);
   return response.data;
 };
@@ -450,6 +469,20 @@ export const rejectApplication = async (id: number, reason: string): Promise<voi
 
 export const deleteApplication = async (id: number): Promise<void> => {
   await api.delete(`/applications/${id}`);
+};
+
+// ========== 事由类别 ==========
+
+export interface ReasonCategory {
+  id: number;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export const getReasonCategories = async (): Promise<ReasonCategory[]> => {
+  const response = await api.get('/reason-categories');
+  return response.data;
 };
 
 // ========== 动态审批规则 ==========
@@ -531,7 +564,7 @@ export const getBorrowings = async (): Promise<BorrowingItem[]> => {
 };
 
 export const createBorrowing = async (data: {
-  title: string;
+  title?: string;
   estimated_amount: number;
   expected_repayment_date?: string;
   application_id?: number;

@@ -23,6 +23,7 @@ class AppCreate(BaseModel):
     description: str = ""
     estimated_amount: float = 0
     project_code: Optional[str] = None
+    reason_category_id: Optional[int] = None
 
 
 class AppResponse(BaseModel):
@@ -113,6 +114,7 @@ async def create_application(
         title=data.title,
         description=data.description,
         estimated_amount=data.estimated_amount,
+        reason_category_id=data.reason_category_id,
         status=ApplicationStatus.SUBMITTED,
     )
     db.add(app)

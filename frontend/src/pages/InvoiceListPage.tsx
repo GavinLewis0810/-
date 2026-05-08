@@ -31,7 +31,8 @@ import dayjs from 'dayjs';
 import {
   listInvoices, deleteInvoice, batchUpdateInvoices,
   batchDeleteInvoices, batchReprocessInvoices, getStatistics,
-  createReimbursement, autoConfirmInvoices, getProjects, getBankCards, getApplications, getBorrowings
+  createReimbursement, autoConfirmInvoices, getProjects, getBankCards, getApplications, getBorrowings,
+  getReasonCategories, ReasonCategory
 } from '../services/api';
 import type { Invoice, Statistics } from '../types/invoice';
 import { InvoiceStatus } from '../types/invoice';
@@ -81,11 +82,12 @@ function InvoiceListPage() {
   const [bankCards, setBankCards] = useState<{ id: number; label: string }[]>([]);
   const [approvedApps, setApprovedApps] = useState<{ id: number; title: string; amount: number; used: number }[]>([]);
   const [approvedBorrowings, setApprovedBorrowings] = useState<{ id: number; title: string; amount: number }[]>([]);
+  const [reasonCategories, setReasonCategories] = useState<ReasonCategory[]>([]);
 
   // 加载项目列表、银行卡、已通过的申请单
   const loadFormData = async () => {
     try {
-      const [projects, cards, apps, borrowings] = await Promise.all([getProjects(), getBankCards(), getApplications(), getBorrowings()]);
+      const [projects, cards, apps, borrowings, rcs] = await Promise.all([getProjects(), getBankCards(), getApplications(), getBorrowings(), getReasonCategories()]);
       setProjectList(projects.map(p => ({ code: p.project_code, name: p.project_name, remaining: p.remaining })));
       setBankCards(cards.map(c => ({
         id: c.id,
@@ -97,6 +99,7 @@ function InvoiceListPage() {
       setApprovedBorrowings(borrowings.filter(b => b.status === '已批准').map(b => ({
         id: b.id, title: b.title, amount: b.estimated_amount,
       })));
+      setReasonCategories(rcs);
     } catch {}
   };
 
@@ -348,14 +351,17 @@ function InvoiceListPage() {
   const handleCreateReimbursement = async () => {
     try {
       const values = await reimburseForm.validateFields();
+      const fullTitle = values.reason_category + (values.reason_detail?.trim() ? `-${values.reason_detail.trim()}` : '');
+      const selectedRc = reasonCategories.find(rc => rc.name === values.reason_category);
       setReimbursing(true);
       await createReimbursement({
-        title: values.title,
+        title: fullTitle,
         project_code: values.project_code,
         invoice_ids: selectedRowKeys,
         bank_card_id: values.bank_card_id,
         application_id: values.application_id,
         borrowing_id: values.borrowing_id,
+        reason_category_id: selectedRc?.id,
       });
       message.success('报销单提交成功！');
       setIsReimburseModalVisible(false);
@@ -883,20 +889,11 @@ function InvoiceListPage() {
           rowSelection={{
             selectedRowKeys,
             onChange: (keys) => setSelectedRowKeys(keys as number[]),
-            // 🚨 修复 TS 报错：强制转成 string 进行比对
             getCheckboxProps: (record) => {
-              const s = record.status as unknown as string;
-              const isEmployee = currentUser?.role !== 'admin';
-              // 已被报销单占用的发票不可再选
+              // 已被报销单占用的发票不可再选（任何操作）
               if (record.reimbursement_id != null) return { disabled: true };
-              // 员工可勾选「待确认」和「已确认」；管理员只能勾选「已确认」
-              if (isEmployee) {
-                const ok = s === '待确认' || s === '已确认' || s === 'REVIEWING' || s === 'CONFIRMED' || s === InvoiceStatus.REVIEWING || s === InvoiceStatus.CONFIRMED;
-                return { disabled: !ok };
-              }
-              return {
-                disabled: s !== '已确认' && s !== 'CONFIRMED' && s !== InvoiceStatus.CONFIRMED,
-              };
+              // 其他状态均可选中，具体操作限制由各按钮自行校验
+              return { disabled: false };
             },
           }}
           pagination={false}
@@ -963,11 +960,21 @@ function InvoiceListPage() {
         </div>
         <Form form={reimburseForm} layout="vertical">
           <Form.Item
-            name="title"
             label="报销事由"
-            rules={[{ required: true, message: '请输入报销事由，如：2026年4月差旅费' }]}
+            required
           >
-            <Input placeholder="例如：2026年4月人工智能大会差旅费" />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Form.Item name="reason_category" noStyle rules={[{ required: true, message: '请选择事由类别' }]}>
+                <Select
+                  placeholder="选择事由类别"
+                  style={{ flex: '0 0 160px' }}
+                  options={reasonCategories.map(rc => ({ value: rc.name, label: rc.name }))}
+                />
+              </Form.Item>
+              <Form.Item name="reason_detail" noStyle>
+                <Input placeholder="具体描述（如：北京客户拜访）" style={{ flex: 1 }} />
+              </Form.Item>
+            </div>
           </Form.Item>
           <Form.Item
             name="project_code"
@@ -994,6 +1001,17 @@ function InvoiceListPage() {
               onChange={(val) => {
                 const app = approvedApps.find(a => a.id === val);
                 setSelectedAppAmount(app ? app.amount : 0);
+                if (app) {
+                  const dashIndex = app.title.indexOf('-');
+                  if (dashIndex > 0) {
+                    reimburseForm.setFieldsValue({
+                      reason_category: app.title.substring(0, dashIndex),
+                      reason_detail: app.title.substring(dashIndex + 1),
+                    });
+                  } else {
+                    reimburseForm.setFieldsValue({ reason_category: app.title, reason_detail: '' });
+                  }
+                }
               }}
               options={approvedApps.map(a => ({
                 value: a.id,

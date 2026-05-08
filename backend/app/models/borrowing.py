@@ -25,6 +25,7 @@ class Borrowing(Base):
     status = Column(String(20), default=BorrowingStatus.SUBMITTED.value, nullable=False)
     reject_reason = Column(String(500), nullable=True)
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reason_category_id = Column(Integer, ForeignKey("reason_categories.id"), nullable=True)
 
     # 关联事前申请
     application_id = Column(Integer, ForeignKey("applications.id"), nullable=True)
@@ -39,5 +40,6 @@ class Borrowing(Base):
     # 关系
     user = relationship("User", foreign_keys=[user_id])
     approver = relationship("User", foreign_keys=[approved_by])
+    reason_category = relationship("ReasonCategory")
     application = relationship("Application", foreign_keys=[application_id])
     reimbursement = relationship("Reimbursement", foreign_keys=[reimbursement_id])

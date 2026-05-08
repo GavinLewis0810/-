@@ -12,6 +12,8 @@ from app.dependencies import get_current_user
 from app.models.borrowing import Borrowing, BorrowingStatus
 from app.models.application import Application, ApplicationStatus
 from app.models.reimbursement import Reimbursement, ReimbursementStatus
+from app.models.bank_card import BankCard
+from app.models.transaction import Transaction
 from app.models.user import User
 from app.models.notification import Notification
 
@@ -44,7 +46,7 @@ _BASE_OPTIONS = [
 
 
 class BorrowCreate(BaseModel):
-    title: str
+    title: Optional[str] = None
     estimated_amount: float
     expected_repayment_date: Optional[str] = None
     application_id: int
@@ -105,12 +107,14 @@ async def create_borrowing(
         )
 
     # 拨款：借款归属申请提交人，财务操作直接批准
+    # 事由自动从申请单继承
     b = Borrowing(
         user_id=app.user_id,
-        title=data.title,
+        title=data.title or f"先行拨款-{app.title}",
         estimated_amount=data.estimated_amount,
         expected_repayment_date=date.fromisoformat(data.expected_repayment_date) if data.expected_repayment_date else None,
         application_id=data.application_id,
+        reason_category_id=app.reason_category_id,
         status=BorrowingStatus.APPROVED.value,
         approved_by=current_user["id"],
     )
@@ -124,6 +128,28 @@ async def create_borrowing(
         entity_type="borrowing",
         entity_id=b.id,
     ))
+
+    # 银行卡余额变动：找到申请人的默认银行卡，存入拨款
+    card = (await db.execute(
+        select(BankCard).where(BankCard.user_id == app.user_id, BankCard.is_default == True)
+    )).scalar_one_or_none()
+    if not card:
+        card = (await db.execute(
+            select(BankCard).where(BankCard.user_id == app.user_id)
+        )).scalars().first()
+
+    if card:
+        balance_before = card.balance
+        card.balance = Decimal(str(card.balance)) + Decimal(str(data.estimated_amount))
+        db.add(Transaction(
+            type="拨款",
+            amount=data.estimated_amount,
+            bank_card_id=card.id,
+            borrowing_id=b.id,
+            balance_before=balance_before,
+            balance_after=card.balance,
+            note=f"事前申请「{app.title}」先行拨款，{data.title}",
+        ))
 
     await db.commit()
     await db.refresh(b)
@@ -208,7 +234,7 @@ async def delete_borrowing(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """删除借款申请（仅草稿或已驳回可删）。"""
+    """删除借款。草稿/已驳回直接删；已批准/已冲销会回退银行卡余额。"""
     query = select(Borrowing).where(Borrowing.id == borrowing_id)
     result = await db.execute(query)
     b = result.scalar_one_or_none()
@@ -218,8 +244,52 @@ async def delete_borrowing(
     if current_user["role"] != "admin" and b.user_id != current_user["id"]:
         raise HTTPException(status_code=403, detail="无权删除")
 
-    if b.status not in [BorrowingStatus.DRAFT.value, BorrowingStatus.REJECTED.value]:
-        raise HTTPException(status_code=400, detail="只能删除草稿或已驳回的借款申请")
+    # 已批准或已冲销的借款，删除时需回退银行卡余额
+    if b.status in [BorrowingStatus.APPROVED.value, BorrowingStatus.REPAID.value]:
+        # 先查有没有实际的拨款流水（旧借款可能没有）
+        disburse_txs = (await db.execute(
+            select(Transaction).where(
+                Transaction.borrowing_id == borrowing_id,
+                Transaction.type == "拨款",
+            )
+        )).scalars().all()
+
+        if disburse_txs:
+            # 用实际拨款金额回退（防止旧数据金额不一致）
+            total_disbursed = sum((tx.amount for tx in disburse_txs), Decimal("0"))
+            card = (await db.execute(
+                select(BankCard).where(BankCard.user_id == b.user_id, BankCard.is_default == True)
+            )).scalar_one_or_none()
+            if not card:
+                card = (await db.execute(
+                    select(BankCard).where(BankCard.user_id == b.user_id)
+                )).scalars().first()
+            if card:
+                balance_before = card.balance
+                card.balance = Decimal(str(card.balance)) - total_disbursed
+                db.add(Transaction(
+                    type="拨款撤回",
+                    amount=Decimal(str(-total_disbursed)),
+                    bank_card_id=card.id,
+                    borrowing_id=None,
+                    balance_before=balance_before,
+                    balance_after=card.balance,
+                    note=f"借款「{b.title}」被删除，拨款 ¥{float(total_disbursed):.2f} 已撤回",
+                ))
+
+        # 清除报销单对借款的引用
+        if b.reimbursement_id:
+            from app.models.reimbursement import Reimbursement
+            reimb = await db.get(Reimbursement, b.reimbursement_id)
+            if reimb:
+                reimb.borrowing_id = None
+
+    # 解除所有关联交易流水的借款引用，防止外键冲突
+    existing_txs = (await db.execute(
+        select(Transaction).where(Transaction.borrowing_id == borrowing_id)
+    )).scalars().all()
+    for tx in existing_txs:
+        tx.borrowing_id = None
 
     await db.delete(b)
     await db.commit()

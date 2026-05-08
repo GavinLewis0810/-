@@ -45,6 +45,8 @@ class Reimbursement(Base):
 
     # 收款银行卡
     bank_card_id = Column(Integer, ForeignKey("bank_cards.id"), nullable=True)
+    # 事由类别
+    reason_category_id = Column(Integer, ForeignKey("reason_categories.id"), nullable=True)
     # 事前申请单
     application_id = Column(Integer, ForeignKey("applications.id"), nullable=True)
     # 关联借款申请（用于冲销）
@@ -57,6 +59,7 @@ class Reimbursement(Base):
 
     # 关联关系
     submitter_user = relationship("User", back_populates="reimbursements", foreign_keys=[submitter_id])
+    reason_category = relationship("ReasonCategory")
     bank_card = relationship("BankCard")
     application = relationship("Application")
     borrowing = relationship("Borrowing", foreign_keys=[borrowing_id])
