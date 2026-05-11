@@ -67,11 +67,17 @@ async def match_rules(
     )
     rules = result.scalars().all()
 
+    print(f"[规则引擎] 上下文: {context}")
+    print(f"[规则引擎] 找到 {len(rules)} 条活跃规则")
     for rule in rules:
         conditions = rule.conditions or {}
         if not conditions:
             continue
-        if _evaluate_node(conditions, context):
+        matched = _evaluate_node(conditions, context)
+        print(f"[规则引擎] 规则「{rule.name}」(pri={rule.priority}) 条件={conditions} → 匹配={matched} action={rule.action}")
+        if matched:
+            print(f"[规则引擎] ✅ 命中 action={rule.action}")
             return rule.action
 
+    print("[规则引擎] ❌ 没有规则命中")
     return None

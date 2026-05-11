@@ -54,6 +54,9 @@ class Invoice(Base):
     # Status management
     status = Column(SQLEnum(InvoiceStatus), default=InvoiceStatus.PENDING, nullable=False)
 
+    # 数据防篡改：SHA-256 数字指纹
+    invoice_hash = Column(String(64), nullable=True, comment="SHA-256数据完整性校验哈希")
+
     # 归属人：外键关联到 users 表
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     # 保留旧字段用于数据迁移（迁移后可删除）

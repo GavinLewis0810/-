@@ -39,7 +39,7 @@ export default function Sidebar({ currentUser, onLogout }: SidebarProps) {
   const location = useLocation();
 
   // 🚀 管理员专属菜单列表
-  const adminOnlyPaths = ['/dashboard', '/users', '/projects'];
+  const adminOnlyPaths = ['/dashboard', '/users', '/projects', '/approval-rules'];
   const employeeOnlyPaths = ['/bank-cards'];
   const filteredNavItems = navItems.filter(item => {
     if (adminOnlyPaths.includes(item.path) && currentUser?.role !== 'admin') return false;

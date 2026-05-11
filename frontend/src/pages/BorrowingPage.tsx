@@ -94,8 +94,9 @@ export default function BorrowingPage() {
           {isAdmin && r.status === '待审批' && (
             <Button size="small" danger icon={<CloseOutlined />} onClick={() => setRejectId(r.id)}>驳回</Button>
           )}
-          {r.status === '已驳回' && (
-            <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}>
+          {isAdmin && (r.status === '已驳回' || r.status === '已批准' || r.status === '已冲销') && (
+            <Popconfirm title={r.status === '已批准' ? '删除将撤回拨款，余额回退，确定删除？' : '确认删除？'}
+              onConfirm={() => handleDelete(r.id)}>
               <Button size="small" icon={<DeleteOutlined />} danger>删除</Button>
             </Popconfirm>
           )}

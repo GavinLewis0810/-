@@ -6,18 +6,27 @@ import {
   getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead,
   NotificationItem,
 } from '../services/api';
+import { onUnreadChange, getGlobalUnread, setGlobalUnread, decGlobalUnread } from '../hooks/useWebSocket';
 
 export default function NotificationBell() {
   const navigate = useNavigate();
   const [notifs, setNotifs] = useState<NotificationItem[]>([]);
-  const [unread, setUnread] = useState(0);
+  const [unread, setUnread] = useState(getGlobalUnread());
   const [open, setOpen] = useState(false);
 
-  const fetchUnread = useCallback(async () => {
-    try {
-      const res = await getUnreadCount();
+  // 初始加载 + WebSocket 实时更新
+  useEffect(() => {
+    // 初次从后端同步未读数
+    getUnreadCount().then((res) => {
+      setGlobalUnread(res.count);
       setUnread(res.count);
-    } catch {}
+    }).catch(() => {});
+
+    // 订阅 WebSocket 推送的未读变化
+    const unsub = onUnreadChange(() => {
+      setUnread(getGlobalUnread());
+    });
+    return unsub;
   }, []);
 
   const fetchList = useCallback(async () => {
@@ -27,13 +36,6 @@ export default function NotificationBell() {
     } catch {}
   }, []);
 
-  useEffect(() => { fetchUnread(); }, [fetchUnread]);
-  // 每 10 秒轮询未读数
-  useEffect(() => {
-    const t = setInterval(fetchUnread, 10000);
-    return () => clearInterval(t);
-  }, [fetchUnread]);
-
   const handleOpen = (visible: boolean) => {
     setOpen(visible);
     if (visible) fetchList();
@@ -41,10 +43,9 @@ export default function NotificationBell() {
 
   const handleRead = async (item: NotificationItem) => {
     if (!item.is_read) {
-      try { await markNotificationRead(item.id); setUnread((n) => Math.max(0, n - 1)); } catch {}
+      try { await markNotificationRead(item.id); decGlobalUnread(1); } catch {}
     }
     if (item.entity_type === 'reimbursement' && item.entity_id) {
-      // 已撤销/已删除的报销单跳发票列表，其他的跳详情页
       const isCancelled = item.title?.includes('撤销');
       navigate(isCancelled ? '/' : `/reimbursements/${item.entity_id}`);
       setOpen(false);
@@ -52,7 +53,7 @@ export default function NotificationBell() {
   };
 
   const handleReadAll = async () => {
-    try { await markAllNotificationsRead(); setUnread(0); fetchList(); } catch {}
+    try { await markAllNotificationsRead(); setGlobalUnread(0); fetchList(); } catch {}
   };
 
   const content = (

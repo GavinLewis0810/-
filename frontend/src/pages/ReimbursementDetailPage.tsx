@@ -34,7 +34,7 @@ export default function ReimbursementDetailPage() {
   const [aiCheckResult, setAiCheckResult] = useState<any>(null);
   const [aiChecking, setAiChecking] = useState(false);
   const [paymentResult, setPaymentResult] = useState<any>(null);
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [approving, setApproving] = useState(false);
   const [reviewNote, setReviewNote] = useState('');
   const [rejectReason, setRejectReason] = useState('');

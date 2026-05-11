@@ -24,8 +24,9 @@ import {
   DownloadOutlined,
   PlusOutlined,
   MinusCircleOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
-import { getInvoice, getInvoiceFileUrl, updateInvoice, resolveDiff, confirmInvoice, reprocessInvoice } from '../services/api';
+import { getInvoice, getInvoiceFileUrl, updateInvoice, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice } from '../services/api';
 import type { InvoiceDetail } from '../types/invoice';
 import { InvoiceStatus } from '../types/invoice';
 import StatusTag from '../components/StatusTag';
@@ -71,6 +72,27 @@ function InvoiceDetailPage() {
     fieldName: '',
   });
   const [customValue, setCustomValue] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ valid: boolean; message: string; stored_hash: string; current_hash: string } | null>(null);
+
+  const handleVerify = async () => {
+    if (!id) return;
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const res = await verifyInvoice(parseInt(id));
+      setVerifyResult(res);
+      if (res.valid) {
+        message.success(res.message);
+      } else {
+        message.error(res.message);
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '校验失败');
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const fetchInvoice = async () => {
     if (!id) return;
@@ -375,6 +397,46 @@ function InvoiceDetailPage() {
                         {invoice.total_with_tax != null ? `¥${Number(invoice.total_with_tax).toFixed(2)}` : '-'}
                       </span>
                     </Descriptions.Item>
+                    {invoice.invoice_hash && (
+                      <Descriptions.Item label={<span><SafetyCertificateOutlined style={{ marginRight: 4, color: '#1677ff' }} />数字指纹</span>} span={2}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <code style={{
+                            fontSize: 11,
+                            background: '#f5f5f5',
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                            flex: 1,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {invoice.invoice_hash}
+                          </code>
+                          <Button
+                            size="small"
+                            type="link"
+                            icon={<SafetyCertificateOutlined />}
+                            onClick={handleVerify}
+                            loading={verifying}
+                          >
+                            验证
+                          </Button>
+                        </div>
+                        {verifyResult && (
+                          <div style={{
+                            marginTop: 6,
+                            fontSize: 12,
+                            color: verifyResult.valid ? '#389e0d' : '#cf1322',
+                          }}>
+                            {verifyResult.valid ? (
+                              <span><CheckCircleOutlined style={{ marginRight: 4 }} />数字指纹校验通过，数据完整可信</span>
+                            ) : (
+                              <span><CloseCircleOutlined style={{ marginRight: 4 }} />警告：数据已被篡改</span>
+                            )}
+                          </div>
+                        )}
+                      </Descriptions.Item>
+                    )}
                   </Descriptions>
 
                   {/* --- 2. 展示模式：大模型直接提取出的明细表格 --- */}

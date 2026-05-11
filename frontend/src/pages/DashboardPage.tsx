@@ -18,7 +18,7 @@ export default function DashboardPage() {
   const [pieData, setPieData] = useState<any[]>([]);
   const [budgetData, setBudgetData] = useState<any[]>([]);
   const [pendingList, setPendingList] = useState<any[]>([]);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchAll = async () => {
     try {
@@ -49,17 +49,66 @@ export default function DashboardPage() {
     point: { size: 3 },
   };
 
-  const budgetBarConfig = {
-    data: budgetData.map((b: any) => ({
-      name: b.project_name || b.project_code,
-      value: Number(b.usage_rate),
-    })),
-    xField: 'value', yField: 'name',
-    theme: 'dark' as const, maxBarWidth: 30,
-    color: (d: any) => d.value >= 100 ? '#E42313' : d.value >= 80 ? '#faad14' : '#22C55E',
-    label: { text: (d: any) => `${d.value}%`, style: { fontWeight: 'bold' as const } },
-    tooltip: { formatter: (d: any) => ({ name: '预算使用率', value: `${d.value}%` }) },
-  };
+  const budgetBarConfig = (() => {
+    const flatData: any[] = [];
+    (Array.isArray(budgetData) ? budgetData : []).forEach((b: any) => {
+      let rawName = b.project_name || b.project_code || '未知项目';
+      if (typeof rawName === 'object') rawName = rawName.name || rawName.title || String(rawName);
+      rawName = String(rawName);
+      const shortName = rawName.length > 7 ? rawName.slice(0, 7) + '...' : rawName;
+      const used = Number(b.used) || 0;
+      const budget = Number(b.budget) || 0;
+      const remaining = Number(b.remaining) || 0;
+      flatData.push({ name: shortName, fullName: rawName, type: '已使用', value: used, budget });
+      flatData.push({ name: shortName, fullName: rawName, type: '预算余额', value: Math.max(0, remaining), budget });
+    });
+    return {
+      data: flatData,
+      xField: 'name', yField: 'value', seriesField: 'type',
+      stack: true, maxBarWidth: 24,
+      color: ['#1677ff', 'rgba(255,255,255,0.08)'],
+      label: {
+        position: 'middle' as const,
+        text: (d: any) => (d.type === '已使用' && d.value > 0 ? `¥${(d.value / 10000).toFixed(1)}万` : ''),
+        style: { fill: '#fff', fontSize: 11, fontWeight: 'bold' as const },
+      },
+      tooltip: {
+        title: (d: any) => d.fullName || d.name,
+        formatter: (d: any) => {
+          const pct = d.budget > 0 ? ((d.value / d.budget) * 100).toFixed(1) : '0';
+          return { name: d.type, value: `¥${d.value.toLocaleString()} (${pct}%)` };
+        },
+      },
+      axis: {
+        x: { style: { labelFontSize: 12, labelFill: 'rgba(255,255,255,0.85)' } },
+        y: {
+  nice: true,
+  tickInterval: (() => {
+    const maxVal = Math.max(
+      ...flatData.map((d: any) => d.budget || 0),
+      1
+    );
+    const rough = maxVal / 5;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rough)));
+    const normalized = rough / magnitude;
+    const step = normalized < 1.5 ? 1
+      : normalized < 3.5 ? 2
+      : normalized < 7.5 ? 5
+      : 10;
+    return step * magnitude;
+  })(),
+  labelFormatter: (v: number) => {
+    if (v === 0) return '0';
+    if (v >= 100_000_000) return `${(v / 100_000_000).toFixed(1)}亿`;
+    if (v >= 10_000) return `${(v / 10_000).toFixed(v % 10_000 === 0 ? 0 : 1)}万`;
+    return `${v}`;
+  },
+  style: { labelFill: 'rgba(255,255,255,0.45)' },
+  grid: { line: { style: { stroke: 'rgba(255,255,255,0.05)' } } },
+},
+      },
+    };
+  })();
 
   const pieConfig = {
     data: pieData,

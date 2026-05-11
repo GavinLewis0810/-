@@ -22,6 +22,7 @@ from app.models.transaction import Transaction
 from app.schemas.reimbursement import ReimbursementCreate, ReimbursementResponse, ReimbursementReview
 from app.services.reimbursement_service import delete_reimbursement_logic
 from app.services.audit_service import log_audit_no_commit, get_client_info
+from app.services.ws_manager import push_notification, push_notification_to_admins
 from app.dependencies import get_current_user
 
 router = APIRouter()
@@ -43,7 +44,6 @@ async def create_reimbursement(
     total = sum([inv.total_with_tax for inv in invoices if inv.total_with_tax])
 
     # 预算超标检查
-    budget_warning = None
     if data.project_code:
         project = await db.scalar(select(Project).where(Project.project_code == data.project_code))
         if project and project.budget > 0:
@@ -54,20 +54,12 @@ async def create_reimbursement(
                 )
             ) or 0
             if Decimal(str(used)) + total > project.budget:
-                budget_warning = f"警告：该项目预算 ¥{float(project.budget):.2f}，已使用 ¥{float(used):.2f}，本次 ¥{float(total):.2f} 将超出预算"
+                remaining = project.budget - Decimal(str(used))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"报销金额 ¥{float(total):.2f} 超出项目「{project.project_name}」剩余预算 ¥{float(remaining):.2f}（总预算 ¥{float(project.budget):.2f}，已使用 ¥{float(used):.2f}）",
+                )
 
-    reimb = Reimbursement(
-        title=data.title,
-        project_code=data.project_code,
-        total_amount=total,
-        submitter=current_user["username"],
-        submitter_id=current_user["id"],
-        bank_card_id=data.bank_card_id,
-        application_id=data.application_id,
-        borrowing_id=data.borrowing_id,
-        reason_category_id=reason_category_id,
-        status=ReimbursementStatus.SUBMITTED
-    )
     # 关联申请单校验：归属 + 状态 + 剩余额度
     reason_category_id = data.reason_category_id
     if data.application_id:
@@ -101,6 +93,31 @@ async def create_reimbursement(
                 detail=f"报销金额 ¥{float(total):.2f} 超出申请单剩余额度 ¥{float(app_remaining):.2f}"
                       f"（申请总额 ¥{float(app.estimated_amount):.2f}，已使用 ¥{float(app_used):.2f}）",
             )
+    # 关联借款申请校验
+    if data.borrowing_id:
+        from app.models.borrowing import Borrowing, BorrowingStatus
+        borrowing = await db.get(Borrowing, data.borrowing_id)
+        if not borrowing:
+            raise HTTPException(status_code=400, detail="关联的借款申请不存在")
+        if borrowing.user_id != current_user["id"]:
+            raise HTTPException(status_code=400, detail="借款申请不属于您")
+        if borrowing.status != BorrowingStatus.APPROVED.value:
+            raise HTTPException(status_code=400, detail="只能关联状态为「已批准」的借款申请")
+        if borrowing.reimbursement_id is not None:
+            raise HTTPException(status_code=400, detail="该借款已被其他报销单冲销")
+
+    reimb = Reimbursement(
+        title=data.title,
+        project_code=data.project_code,
+        total_amount=total,
+        submitter=current_user["username"],
+        submitter_id=current_user["id"],
+        bank_card_id=data.bank_card_id,
+        application_id=data.application_id,
+        borrowing_id=data.borrowing_id,
+        reason_category_id=reason_category_id,
+        status=ReimbursementStatus.SUBMITTED
+    )
     db.add(reimb)
     await db.flush()
 
@@ -124,18 +141,13 @@ async def create_reimbursement(
                 raise HTTPException(status_code=400, detail=f"发票号码 {inv.invoice_number} 已被他人提交报销，无法重复使用")
         inv.reimbursement_id = reimb.id
 
-    # 通知所有管理员：有新的报销单待审批
-    admin_query = select(User).where(User.role == "admin")
-    admin_result = await db.execute(admin_query)
-    admins = admin_result.scalars().all()
-    for admin in admins:
-        db.add(Notification(
-            user_id=admin.id,
-            title="新报销单待审批",
-            message=f"员工 {current_user.get('full_name') or current_user.get('username')} 提交了报销单「{reimb.title}」，金额 ¥{float(reimb.total_amount or 0):.2f}，请及时审批。",
-            entity_type="reimbursement",
-            entity_id=reimb.id,
-        ))
+    await push_notification_to_admins(
+        db,
+        title="新报销单待审批",
+        message=f"员工 {current_user.get('full_name') or current_user.get('username')} 提交了报销单「{reimb.title}」，金额 ¥{float(reimb.total_amount or 0):.2f}，请及时审批。",
+        entity_type="reimbursement",
+        entity_id=reimb.id,
+    )
 
     await db.commit()
 
@@ -488,12 +500,12 @@ async def ai_check_reimbursement(
         for inv in reimb.invoices:
             inv.status = InvoiceStatus.REIMBURSED
         if reimb.submitter_id:
-            db.add(Notification(
-                user_id=reimb.submitter_id,
+            await push_notification(
+                db, reimb.submitter_id,
                 title="报销单自动审批通过",
                 message=f"您的报销单「{reimb.title}」¥{float(reimb.total_amount or 0):.2f} 已由AI规则引擎自动审批通过，进入待打款队列。",
                 entity_type="reimbursement", entity_id=reimb.id,
-            ))
+            )
         await db.commit()
         await db.refresh(reimb)
 
@@ -509,9 +521,12 @@ async def approve_reimbursement(
     reimb_id: int,
     body: dict,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """审批通过报销单"""
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可操作")
     query = select(Reimbursement).options(
         selectinload(Reimbursement.invoices)
     ).where(Reimbursement.id == reimb_id)
@@ -562,15 +577,13 @@ async def approve_reimbursement(
         user_agent=client_info.get("user_agent"),
     )
 
-    # 发通知给提交人
     if reimb.submitter_id:
-        db.add(Notification(
-            user_id=reimb.submitter_id,
+        await push_notification(
+            db, reimb.submitter_id,
             title="报销单审批通过",
             message=f"您的报销单「{reimb.title}」已审批通过，金额 ¥{float(reimb.total_amount or 0):.2f}，预计 3 个工作日内到账。",
-            entity_type="reimbursement",
-            entity_id=reimb.id,
-        ))
+            entity_type="reimbursement", entity_id=reimb.id,
+        )
 
     await db.commit()
     await db.refresh(reimb)
@@ -588,9 +601,12 @@ async def reject_reimbursement(
     reimb_id: int,
     body: dict,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """驳回报销单，释放关联发票"""
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可操作")
     query = select(Reimbursement).options(
         selectinload(Reimbursement.invoices)
     ).where(Reimbursement.id == reimb_id)
@@ -625,15 +641,13 @@ async def reject_reimbursement(
         user_agent=client_info.get("user_agent"),
     )
 
-    # 发通知给提交人
     if reimb.submitter_id:
-        db.add(Notification(
-            user_id=reimb.submitter_id,
+        await push_notification(
+            db, reimb.submitter_id,
             title="报销单已驳回",
             message=f"您的报销单「{reimb.title}」已被驳回。理由：{reject_reason}",
-            entity_type="reimbursement",
-            entity_id=reimb.id,
-        ))
+            entity_type="reimbursement", entity_id=reimb.id,
+        )
 
     await db.commit()
     await db.refresh(reimb)
@@ -674,15 +688,15 @@ async def complete_reimbursement(
     reimb.payment_time = payment_result["transfer_time"]
     reimb.payment_bank = payment_result["to_bank"]
 
-    # 通知提交人（含交易流水号）
     if reimb.submitter_id:
-        db.add(Notification(
-            user_id=reimb.submitter_id,
+        pay_tail = payment_result['to_account'][-4:]
+        pay_arrival = payment_result['estimated_arrival'][:16].replace('T', ' ')
+        await push_notification(
+            db, reimb.submitter_id,
             title="报销款已打款",
-            message=f"您的报销单「{reimb.title}」¥{float(reimb.total_amount or 0):.2f} 已打入尾号 {payment_result['to_account'][-4:]} 的{payment_result['to_bank']}，流水号 {payment_result['transaction_id']}，预计 {payment_result['estimated_arrival'][:16].replace('T', ' ')} 前到账。",
-            entity_type="reimbursement",
-            entity_id=reimb.id,
-        ))
+            message=f"您的报销单「{reimb.title}」¥{float(reimb.total_amount or 0):.2f} 已打入尾号 {pay_tail} 的{payment_result['to_bank']}，流水号 {payment_result['transaction_id']}，预计 {pay_arrival} 前到账。",
+            entity_type="reimbursement", entity_id=reimb.id,
+        )
 
     # 审计
     client_info = get_client_info(request)
@@ -716,41 +730,35 @@ async def complete_reimbursement(
             if reimb_amt > borrow_amt:
                 # 超额冲销：报销金额 > 借款金额，通知借款人和所有管理员
                 excess = reimb_amt - borrow_amt
-                db.add(Notification(
-                    user_id=borrowing.user_id,
+                await push_notification(
+                    db, borrowing.user_id,
                     title="借款超额冲销提醒",
                     message=f"您的借款「{borrowing.title}」（借款金额 ¥{borrow_amt:.2f}）已被报销单 #{reimb.id} 超额冲销，冲销金额 ¥{reimb_amt:.2f}，超出 ¥{excess:.2f}，请关注。",
-                    entity_type="borrowing",
-                    entity_id=borrowing.id,
-                ))
-                admins = (await db.execute(select(User).where(User.role == "admin"))).scalars().all()
-                for admin in admins:
-                    db.add(Notification(
-                        user_id=admin.id,
-                        title="借款超额冲销预警",
-                        message=f"员工 {reimb.submitter} 的借款「{borrowing.title}」（¥{borrow_amt:.2f}）被报销单 #{reimb.id} 超额冲销 ¥{reimb_amt:.2f}，超出 ¥{excess:.2f}",
-                        entity_type="borrowing",
-                        entity_id=borrowing.id,
-                    ))
+                    entity_type="borrowing", entity_id=borrowing.id,
+                )
+                await push_notification_to_admins(
+                    db,
+                    title="借款超额冲销预警",
+                    message=f"员工 {reimb.submitter} 的借款「{borrowing.title}」（¥{borrow_amt:.2f}）被报销单 #{reimb.id} 超额冲销 ¥{reimb_amt:.2f}，超出 ¥{excess:.2f}",
+                    entity_type="borrowing", entity_id=borrowing.id,
+                )
             elif reimb_amt < borrow_amt:
                 # 部分冲销：报销金额 < 借款金额，通知借款人还有未冲销余额
                 shortfall = borrow_amt - reimb_amt
-                db.add(Notification(
-                    user_id=borrowing.user_id,
+                await push_notification(
+                    db, borrowing.user_id,
                     title="借款部分冲销提醒",
                     message=f"您的借款「{borrowing.title}」（借款金额 ¥{borrow_amt:.2f}）已被报销单 #{reimb.id} 部分冲销 ¥{reimb_amt:.2f}，尚有 ¥{shortfall:.2f} 未冲销，请关注。",
-                    entity_type="borrowing",
-                    entity_id=borrowing.id,
-                ))
+                    entity_type="borrowing", entity_id=borrowing.id,
+                )
             else:
                 # 等额冲销，正常通知
-                db.add(Notification(
-                    user_id=borrowing.user_id,
+                await push_notification(
+                    db, borrowing.user_id,
                     title="借款已冲销",
                     message=f"您的借款「{borrowing.title}」¥{borrow_amt:.2f} 已被报销单 #{reimb.id} 全额冲销，冲销金额 ¥{reimb_amt:.2f}",
-                    entity_type="borrowing",
-                    entity_id=borrowing.id,
-                ))
+                    entity_type="borrowing", entity_id=borrowing.id,
+                )
 
     # 银行卡余额变动
     card = reimb.bank_card

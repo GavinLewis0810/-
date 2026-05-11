@@ -80,9 +80,11 @@ function InvoiceListPage() {
   const [reimburseForm] = Form.useForm();
   const [projectList, setProjectList] = useState<{ code: string; name: string; remaining: number | string }[]>([]);
   const [bankCards, setBankCards] = useState<{ id: number; label: string }[]>([]);
-  const [approvedApps, setApprovedApps] = useState<{ id: number; title: string; amount: number; used: number }[]>([]);
+  const [approvedApps, setApprovedApps] = useState<{ id: number; title: string; amount: number; used: number; project_code: string | null }[]>([]);
   const [approvedBorrowings, setApprovedBorrowings] = useState<{ id: number; title: string; amount: number }[]>([]);
   const [reasonCategories, setReasonCategories] = useState<ReasonCategory[]>([]);
+  const [reimbReasonCategory, setReimbReasonCategory] = useState('');
+  const [reimbReasonDetail, setReimbReasonDetail] = useState('');
 
   // 加载项目列表、银行卡、已通过的申请单
   const loadFormData = async () => {
@@ -94,7 +96,7 @@ function InvoiceListPage() {
         label: `${c.bank_name} ····${c.card_number.slice(-4)} ${c.is_default ? '(默认)' : ''} — ${c.account_name}`,
       })));
       setApprovedApps(apps.filter(a => a.status === '已通过').map(a => ({
-        id: a.id, title: a.title, amount: a.estimated_amount, used: a.used_amount || 0,
+        id: a.id, title: a.title, amount: a.estimated_amount, used: a.used_amount || 0, project_code: a.project_code,
       })));
       setApprovedBorrowings(borrowings.filter(b => b.status === '已批准').map(b => ({
         id: b.id, title: b.title, amount: b.estimated_amount,
@@ -114,7 +116,7 @@ function InvoiceListPage() {
   }, [invoices, selectedRowKeys]);
 
   // 用于轮询的 Ref
-  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fetchInvoicesRef = useRef<((silent?: boolean) => Promise<void>) | null>(null);
 
   // Column settings
@@ -349,10 +351,11 @@ function InvoiceListPage() {
   };
 
   const handleCreateReimbursement = async () => {
+    if (!reimbReasonCategory) { message.warning('请选择事由类别'); return; }
     try {
       const values = await reimburseForm.validateFields();
-      const fullTitle = values.reason_category + (values.reason_detail?.trim() ? `-${values.reason_detail.trim()}` : '');
-      const selectedRc = reasonCategories.find(rc => rc.name === values.reason_category);
+      const fullTitle = reimbReasonCategory + (reimbReasonDetail.trim() ? `-${reimbReasonDetail.trim()}` : '');
+      const selectedRc = reasonCategories.find(rc => rc.name === reimbReasonCategory);
       setReimbursing(true);
       await createReimbursement({
         title: fullTitle,
@@ -366,6 +369,7 @@ function InvoiceListPage() {
       message.success('报销单提交成功！');
       setIsReimburseModalVisible(false);
       reimburseForm.resetFields();
+      setReimbReasonCategory(''); setReimbReasonDetail('');
       setSelectedRowKeys([]);
       fetchInvoices();
     } catch (error: any) {
@@ -950,6 +954,7 @@ function InvoiceListPage() {
         onCancel={() => {
           setIsReimburseModalVisible(false);
           reimburseForm.resetFields();
+          setReimbReasonCategory(''); setReimbReasonDetail('');
         }}
         confirmLoading={reimbursing}
         okText="提交审批"
@@ -959,23 +964,24 @@ function InvoiceListPage() {
           您已选中 <strong style={{ color: '#1890ff' }}>{selectedRowKeys.length}</strong> 张发票，总金额将自动计算。
         </div>
         <Form form={reimburseForm} layout="vertical">
-          <Form.Item
-            label="报销事由"
-            required
-          >
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>报销事由 <span style={{ color: '#E42313' }}>*</span></div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Form.Item name="reason_category" noStyle rules={[{ required: true, message: '请选择事由类别' }]}>
-                <Select
-                  placeholder="选择事由类别"
-                  style={{ flex: '0 0 160px' }}
-                  options={reasonCategories.map(rc => ({ value: rc.name, label: rc.name }))}
-                />
-              </Form.Item>
-              <Form.Item name="reason_detail" noStyle>
-                <Input placeholder="具体描述（如：北京客户拜访）" style={{ flex: 1 }} />
-              </Form.Item>
+              <Select
+                value={reimbReasonCategory || undefined}
+                onChange={(v) => setReimbReasonCategory(v)}
+                placeholder="选择事由类别"
+                style={{ flex: '0 0 160px' }}
+                options={reasonCategories.map(rc => ({ value: rc.name, label: rc.name }))}
+              />
+              <Input
+                value={reimbReasonDetail}
+                onChange={(e) => setReimbReasonDetail(e.target.value)}
+                placeholder="具体描述（如：北京客户拜访）"
+                style={{ flex: 1 }}
+              />
             </div>
-          </Form.Item>
+          </div>
           <Form.Item
             name="project_code"
             label="项目编号 / 课题组编号"
@@ -1004,13 +1010,18 @@ function InvoiceListPage() {
                 if (app) {
                   const dashIndex = app.title.indexOf('-');
                   if (dashIndex > 0) {
-                    reimburseForm.setFieldsValue({
-                      reason_category: app.title.substring(0, dashIndex),
-                      reason_detail: app.title.substring(dashIndex + 1),
-                    });
+                    setReimbReasonCategory(app.title.substring(0, dashIndex));
+                    setReimbReasonDetail(app.title.substring(dashIndex + 1));
                   } else {
-                    reimburseForm.setFieldsValue({ reason_category: app.title, reason_detail: '' });
+                    setReimbReasonCategory(app.title);
+                    setReimbReasonDetail('');
                   }
+                  if (app.project_code) {
+                    reimburseForm.setFieldsValue({ project_code: app.project_code });
+                  }
+                } else {
+                  setReimbReasonCategory('');
+                  setReimbReasonDetail('');
                 }
               }}
               options={approvedApps.map(a => ({

@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 from app.models.reimbursement import Reimbursement
 from app.models.invoice import InvoiceStatus
 from app.models.notification import Notification
+from app.services.ws_manager import push_notification
 from app.models.borrowing import Borrowing
 from app.models.transaction import Transaction
 
@@ -41,13 +42,12 @@ async def delete_reimbursement_logic(
 
     # 发通知给提交人
     if submitter_id:
-        db.add(Notification(
-            user_id=submitter_id,
+        await push_notification(
+            db, submitter_id,
             title="报销单已撤销",
             message=f"您的报销单[{reimb_title}]已被{deleted_by_username}撤销，关联发票已恢复为可用状态。",
-            entity_type="reimbursement",
-            entity_id=reimb_id,
-        ))
+            entity_type="reimbursement", entity_id=reimb_id,
+        )
 
     # 删除报销单
     await db.delete(reimb)

@@ -1,6 +1,6 @@
 """收款银行卡模型。"""
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Numeric
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -14,6 +14,7 @@ class BankCard(Base):
     account_name = Column(String(50), nullable=False)     # 持卡人姓名
     card_number = Column(String(30), nullable=False)      # 银行卡号（尾号存储/脱敏）
     is_default = Column(Boolean, default=False)
+    balance = Column(Numeric(12, 2), default=0, nullable=False)  # 当前余额
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

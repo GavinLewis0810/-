@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import Sidebar from './Sidebar';
 import NotificationBell from '../NotificationBell';
+import useWebSocket from '../../hooks/useWebSocket';
 import styles from './MainLayout.module.css';
 
 export interface MainLayoutProps {
@@ -14,6 +15,8 @@ export function MainLayout({
   currentUser,
   onLogout,
 }: MainLayoutProps) {
+  useWebSocket();
+
   return (
     <div className={styles.layoutContainer}>
       <Sidebar

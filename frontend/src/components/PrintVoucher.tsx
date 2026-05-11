@@ -12,8 +12,8 @@ interface Props {
   reviewer?: string | null;
   reviewNote?: string | null;
   bankCardInfo?: string | null;
-  submitterSignature?: string | null; // base64 PNG
-  reviewerSignature?: string | null; // base64 PNG
+  submitterSignature?: string | null;
+  reviewerSignature?: string | null;
   items: Array<{
     item_name?: string | null;
     specification?: string | null;
@@ -55,19 +55,38 @@ export default function PrintVoucher({
     setOpen(true);
   };
 
-  const handlePrint = () => { window.print(); };
+  const handlePrint = () => {
+    const voucherEl = document.getElementById('voucher-print-area');
+    if (!voucherEl) return;
+
+    const printWin = window.open('', '_blank', 'width=800,height=600');
+    if (!printWin) return;
+
+    const voucherHTML = voucherEl.outerHTML;
+
+    printWin.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>报销凭证</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: SimSun, serif; }
+          @page { size: A4; margin: 12mm; }
+        </style>
+      </head>
+      <body>${voucherHTML}</body>
+      </html>
+    `);
+    printWin.document.close();
+    printWin.focus();
+    printWin.onafterprint = () => printWin.close();
+    printWin.print();
+  };
 
   const content = (
     <div style={voucherStyle.page} id="voucher-print-area">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #voucher-print-area, #voucher-print-area * { visibility: visible; }
-          #voucher-print-area { position: absolute; top: 0; left: 0; width: 100%; }
-          @page { size: A4; margin: 12mm; }
-        }
-      `}</style>
-
       <div style={voucherStyle.header}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>智能发票报销管理系统</h2>
         <h3 style={{ margin: '8px 0 0', fontSize: 17, letterSpacing: 6 }}>报 销 凭 证</h3>

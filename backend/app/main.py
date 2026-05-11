@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 # 🚀 1. 在这里导入 auth 路由
-from app.routers import invoices, settings, reimbursements, auth, admin, notifications, projects, bank_cards, applications, approval_rules, borrowings, reason_categories
+from app.routers import invoices, settings, reimbursements, auth, admin, notifications, projects, bank_cards, applications, approval_rules, borrowings, reason_categories, ws
 
 from app.config import get_settings
 from app.routers import health, invoices, settings as settings_router
@@ -62,6 +62,7 @@ app.include_router(applications.router, prefix="/api/applications", tags=["Appli
 app.include_router(approval_rules.router, prefix="/api/approval-rules", tags=["ApprovalRules"])
 app.include_router(borrowings.router, prefix="/api/borrowings", tags=["Borrowings"])
 app.include_router(reason_categories.router, prefix="/api/reason-categories", tags=["ReasonCategories"])
+app.include_router(ws.router, prefix="/ws", tags=["WebSocket"])
 
 
 # 🚀 3. 终极改造：系统冷启动时自动建表 + 植入超级管理员
@@ -156,6 +157,7 @@ async def startup():
             " created_at TIMESTAMP DEFAULT NOW()"
             ")",
             # 外键迁移：新列
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_hash VARCHAR(64)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS submitter_id INTEGER REFERENCES users(id)",
             # 银行卡余额
@@ -214,7 +216,7 @@ async def startup():
                     "operator": "AND",
                     "rules": [
                         {"field": "total_amount", "op": "<", "value": 500},
-                        {"field": "ai_risk_level", "op": "in", "value": ["低风险", "低"]},
+                        {"field": "ai_risk_level", "op": "in", "value": ["低风险"]},
                     ]
                 })
                 await conn.execute(text(
@@ -232,19 +234,23 @@ async def startup():
         except Exception as e:
             print(f"⚠️ 默认规则跳过: {e}")
 
-        # --- 植入默认事由类别 ---
+        # --- 修复 + 植入默认事由类别 ---
         try:
+            # 修复已存在但 is_active 为 NULL 的记录
+            await conn.execute(text(
+                "UPDATE reason_categories SET is_active = TRUE WHERE is_active IS NULL"
+            ))
             existing = await conn.execute(text("SELECT COUNT(*) FROM reason_categories"))
             if existing.scalar() == 0:
                 categories = [
                     ("差旅费", 1), ("办公用品采购", 2), ("会议费", 3),
                     ("招待费", 4), ("培训费", 5), ("交通费", 6),
-                    ("印刷费", 7), ("通讯费", 8), ("设备维修", 9),
-                    ("其他费用", 10),
+                    ("印刷费", 7), ("通讯费", 8), ("设备采购", 9),
+                    ("设备维修", 10), ("其他费用", 11),
                 ]
                 for name, sort_order in categories:
                     await conn.execute(text(
-                        "INSERT INTO reason_categories (name, sort_order) VALUES (:name, :sort_order)"
+                        "INSERT INTO reason_categories (name, sort_order, is_active) VALUES (:name, :sort_order, TRUE)"
                     ), {"name": name, "sort_order": sort_order})
                 print("✅ 已植入默认事由类别（10 条）")
         except Exception as e:

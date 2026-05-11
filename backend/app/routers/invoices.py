@@ -1,3 +1,5 @@
+import hashlib
+import json
 from typing import Optional, List
 from io import BytesIO
 from datetime import date
@@ -346,6 +348,9 @@ async def get_invoice(
         "tax_rate": invoice.tax_rate,
         "tax_amount": invoice.tax_amount,
         "items": invoice.items,  # 将 PostgreSQL 中的 JSONB 直接输出为数组
+        "owner_id": invoice.owner_id,
+        "reimbursement_id": invoice.reimbursement_id,
+        "invoice_hash": invoice.invoice_hash,
         "created_at": invoice.created_at,
         "updated_at": invoice.updated_at,
         "ocr_result": ocr,
@@ -532,6 +537,8 @@ async def batch_delete_invoices(
     client_info = get_client_info(request)
     deleted_count = 0
     for invoice in invoices:
+        if invoice.reimbursement_id is not None:
+            raise HTTPException(status_code=400, detail=f"发票 {invoice.invoice_number or invoice.id} 已被关联到报销单，无法删除。请先删除对应报销单")
         # Audit log for each deletion
         await log_audit_no_commit(
             db=db,
@@ -659,6 +666,8 @@ async def delete_invoice(
 
     if not invoice:
         raise HTTPException(status_code=404, detail="发票不存在")
+    if invoice.reimbursement_id is not None:
+        raise HTTPException(status_code=400, detail="该发票已被关联到报销单，无法删除。请先删除对应报销单")
 
     # Audit log
     client_info = get_client_info(request)
@@ -856,6 +865,24 @@ async def confirm_invoice(
                 diff.final_value = diff.ocr_value or diff.llm_value
             diff.resolved = 1
 
+    # 生成数字指纹：SHA-256 数据完整性校验哈希
+    raw = json.dumps({
+        "invoice_number": invoice.invoice_number,
+        "issue_date": str(invoice.issue_date) if invoice.issue_date else None,
+        "total_with_tax": str(invoice.total_with_tax) if invoice.total_with_tax else None,
+        "amount": str(invoice.amount) if invoice.amount else None,
+        "tax_amount": str(invoice.tax_amount) if invoice.tax_amount else None,
+        "buyer_name": invoice.buyer_name,
+        "buyer_tax_id": invoice.buyer_tax_id,
+        "seller_name": invoice.seller_name,
+        "seller_tax_id": invoice.seller_tax_id,
+        "items": json.dumps(invoice.items, ensure_ascii=False) if invoice.items else None,
+        "owner_id": invoice.owner_id,
+        "status": InvoiceStatus.CONFIRMED.value,
+    }, sort_keys=True, ensure_ascii=False)
+    invoice.invoice_hash = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+    print(f"[HASH] 发票 #{invoice.id} 数字指纹已生成: {invoice.invoice_hash[:16]}...")
+
     # Update invoice status
     old_status = invoice.status.value if invoice.status else None
     invoice.status = InvoiceStatus.CONFIRMED
@@ -926,6 +953,22 @@ async def auto_confirm_invoices(
             continue
 
         # 无冲突、无缺失 → 自动确认
+        raw = json.dumps({
+            "invoice_number": invoice.invoice_number,
+            "issue_date": str(invoice.issue_date) if invoice.issue_date else None,
+            "total_with_tax": str(invoice.total_with_tax) if invoice.total_with_tax else None,
+            "amount": str(invoice.amount) if invoice.amount else None,
+            "tax_amount": str(invoice.tax_amount) if invoice.tax_amount else None,
+            "buyer_name": invoice.buyer_name,
+            "buyer_tax_id": invoice.buyer_tax_id,
+            "seller_name": invoice.seller_name,
+            "seller_tax_id": invoice.seller_tax_id,
+            "items": json.dumps(invoice.items, ensure_ascii=False) if invoice.items else None,
+            "owner_id": invoice.owner_id,
+            "status": InvoiceStatus.CONFIRMED.value,
+        }, sort_keys=True, ensure_ascii=False)
+        invoice.invoice_hash = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
         invoice.status = InvoiceStatus.CONFIRMED
         confirmed_ids.append(invoice.id)
 
@@ -947,6 +990,48 @@ async def auto_confirm_invoices(
         "message": f"自动确认 {len(confirmed_ids)} 张发票",
         "confirmed_ids": confirmed_ids,
         "need_manual_ids": need_manual_ids,
+    }
+
+
+@router.get("/{invoice_id}/verify")
+async def verify_invoice_integrity(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """验证发票数据完整性：重新计算哈希并与存证哈希对比。"""
+    query = select(Invoice).where(Invoice.id == invoice_id)
+    result = await db.execute(query)
+    invoice = result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(status_code=404, detail="发票不存在")
+    if not invoice.invoice_hash:
+        raise HTTPException(status_code=400, detail="该发票尚未生成数字指纹，请先确认发票")
+
+    raw = json.dumps({
+        "invoice_number": invoice.invoice_number,
+        "issue_date": str(invoice.issue_date) if invoice.issue_date else None,
+        "total_with_tax": str(invoice.total_with_tax) if invoice.total_with_tax else None,
+        "amount": str(invoice.amount) if invoice.amount else None,
+        "tax_amount": str(invoice.tax_amount) if invoice.tax_amount else None,
+        "buyer_name": invoice.buyer_name,
+        "buyer_tax_id": invoice.buyer_tax_id,
+        "seller_name": invoice.seller_name,
+        "seller_tax_id": invoice.seller_tax_id,
+        "items": json.dumps(invoice.items, ensure_ascii=False) if invoice.items else None,
+        "owner_id": invoice.owner_id,
+        "status": invoice.status.value if invoice.status else None,
+    }, sort_keys=True, ensure_ascii=False)
+    current_hash = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+    is_valid = current_hash == invoice.invoice_hash
+
+    return {
+        "invoice_id": invoice_id,
+        "valid": is_valid,
+        "stored_hash": invoice.invoice_hash,
+        "current_hash": current_hash,
+        "message": "数字指纹校验通过，该票据存证后未被篡改。" if is_valid else "警告：数据已被篡改！当前哈希与存证哈希不一致。",
     }
 
 

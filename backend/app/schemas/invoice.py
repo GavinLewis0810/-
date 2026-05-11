@@ -59,7 +59,9 @@ class InvoiceResponse(InvoiceBase):
     file_type: str
     status: InvoiceStatus
     owner: Optional[str] = None
+    owner_id: Optional[int] = None
     reimbursement_id: Optional[int] = None
+    invoice_hash: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

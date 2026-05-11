@@ -27,18 +27,19 @@ class ReasonCategoryResponse(BaseModel):
     id: int
     name: str
     sort_order: int
-    is_active: bool
+    is_active: Optional[bool] = None
 
     class Config:
         from_attributes = True
 
 
-@router.get("", response_model=List[ReasonCategoryResponse])
+@router.get("")
 async def list_reason_categories(db: AsyncSession = Depends(get_db)):
-    """获取所有启用的事由类别（按排序排列）。"""
-    query = select(ReasonCategory).where(ReasonCategory.is_active == True).order_by(ReasonCategory.sort_order)
+    """获取所有事由类别（按排序排列）。"""
+    query = select(ReasonCategory).order_by(ReasonCategory.sort_order)
     result = await db.execute(query)
-    return result.scalars().all()
+    items = result.scalars().all()
+    return [{"id": rc.id, "name": rc.name, "sort_order": rc.sort_order, "is_active": rc.is_active} for rc in items]
 
 
 @router.post("", response_model=ReasonCategoryResponse)

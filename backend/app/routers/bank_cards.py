@@ -1,12 +1,15 @@
 """收款银行卡管理端点。"""
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from decimal import Decimal
 from pydantic import BaseModel
 
 from app.database import get_db
 from app.models.bank_card import BankCard
+from app.models.transaction import Transaction
 from app.dependencies import get_current_user
 
 router = APIRouter()
@@ -24,9 +27,22 @@ class BankCardResponse(BaseModel):
     account_name: str
     card_number: str
     is_default: bool
+    balance: float
 
     class Config:
         from_attributes = True
+
+
+class TransactionResponse(BaseModel):
+    id: int
+    type: str
+    amount: float
+    borrowing_id: Optional[int] = None
+    reimbursement_id: Optional[int] = None
+    balance_before: float
+    balance_after: float
+    note: Optional[str] = None
+    created_at: str
 
 
 @router.get("", response_model=List[BankCardResponse])
@@ -105,3 +121,41 @@ async def delete_bank_card(
     await db.delete(card)
     await db.commit()
     return {"message": "已删除"}
+
+
+@router.get("/transactions", response_model=List[TransactionResponse])
+async def list_transactions(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取当前用户银行卡的交易流水。"""
+    # 先找到用户的银行卡
+    cards_result = await db.execute(
+        select(BankCard.id).where(BankCard.user_id == current_user["id"])
+    )
+    card_ids = [c[0] for c in cards_result.all()]
+    if not card_ids:
+        return []
+
+    result = await db.execute(
+        select(Transaction)
+        .where(Transaction.bank_card_id.in_(card_ids))
+        .order_by(Transaction.created_at.desc())
+        .limit(50)
+    )
+    transactions = result.scalars().all()
+
+    return [
+        {
+            "id": t.id,
+            "type": t.type,
+            "amount": float(t.amount),
+            "borrowing_id": t.borrowing_id,
+            "reimbursement_id": t.reimbursement_id,
+            "balance_before": float(t.balance_before),
+            "balance_after": float(t.balance_after),
+            "note": t.note,
+            "created_at": t.created_at.isoformat() if t.created_at else "",
+        }
+        for t in transactions
+    ]

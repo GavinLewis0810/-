@@ -42,7 +42,9 @@ export interface Invoice {
 
   status: InvoiceStatus;
   owner: string | null;
+  owner_id: number | null;
   reimbursement_id: number | null;
+  invoice_hash: string | null;
   created_at: string;
   updated_at: string;
 }

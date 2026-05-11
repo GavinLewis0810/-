@@ -1,4 +1,5 @@
 """事前申请单管理端点。"""
+from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from app.models.project import Project
 from app.models.notification import Notification
 from app.models.user import User
 from app.dependencies import get_current_user
+from app.services.ws_manager import push_notification, push_notification_to_admins
 
 router = APIRouter()
 
@@ -107,6 +109,20 @@ async def create_application(
         if not project:
             raise HTTPException(status_code=400, detail=f"项目 {data.project_code} 不存在")
         project_name = project.project_name
+        # 检查项目剩余预算
+        if project.budget > 0:
+            used = await db.scalar(
+                select(func.coalesce(func.sum(Application.estimated_amount), 0)).where(
+                    Application.project_code == data.project_code,
+                    Application.status == ApplicationStatus.APPROVED,
+                )
+            ) or 0
+            remaining = project.budget - Decimal(str(used))
+            if Decimal(str(data.estimated_amount)) > remaining:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"申请金额 ¥{data.estimated_amount:.2f} 超出项目「{project_name}」剩余预算 ¥{float(remaining):.2f}",
+                )
 
     app = Application(
         user_id=current_user["id"],
@@ -121,16 +137,14 @@ async def create_application(
     await db.flush()
 
     # 通知管理员
-    admins = (await db.execute(select(User).where(User.role == "admin"))).scalars().all()
-    for admin in admins:
-        db.add(Notification(
-            user_id=admin.id,
-            title="新的事前申请单待审批",
-            message=f"员工 {current_user.get('full_name')} 提交了申请「{data.title}」，预估金额 ¥{data.estimated_amount:.2f}" + (
-                f"（项目：{project_name}）" if project_name else ""),
-            entity_type="application",
-            entity_id=app.id,
-        ))
+    await push_notification_to_admins(
+        db,
+        title="新的事前申请单待审批",
+        message=f"员工 {current_user.get('full_name')} 提交了申请「{data.title}」，预估金额 ¥{data.estimated_amount:.2f}" + (
+            f"（项目：{project_name}）" if project_name else ""),
+        entity_type="application",
+        entity_id=app.id,
+    )
 
     await db.commit()
     await db.refresh(app)
@@ -156,14 +170,17 @@ async def approve_application(
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     app = await db.get(Application, app_id)
     if not app: raise HTTPException(status_code=404, detail="申请单不存在")
+    if app.status != ApplicationStatus.SUBMITTED:
+        raise HTTPException(status_code=400, detail="只能审批状态为「待审批」的申请单")
     app.status = ApplicationStatus.APPROVED
     app.approved_by = current_user["id"]
 
-    db.add(Notification(
-        user_id=app.user_id, title="事前申请已通过",
+    await push_notification(
+        db, app.user_id,
+        title="事前申请已通过",
         message=f"您的申请「{app.title}」已通过，预估金额 ¥{float(app.estimated_amount):.2f}，可以提交报销了。",
         entity_type="application", entity_id=app.id,
-    ))
+    )
     await db.commit()
     return {"message": "已通过"}
 
@@ -180,14 +197,17 @@ async def reject_application(
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     app = await db.get(Application, app_id)
     if not app: raise HTTPException(status_code=404, detail="申请单不存在")
+    if app.status != ApplicationStatus.SUBMITTED:
+        raise HTTPException(status_code=400, detail="只能驳回状态为「待审批」的申请单")
     app.status = ApplicationStatus.REJECTED
     app.reject_reason = body.get("reason", "")
 
-    db.add(Notification(
-        user_id=app.user_id, title="事前申请已驳回",
+    await push_notification(
+        db, app.user_id,
+        title="事前申请已驳回",
         message=f"您的申请「{app.title}」已被驳回。原因：{app.reject_reason or '无'}",
         entity_type="application", entity_id=app.id,
-    ))
+    )
     await db.commit()
     return {"message": "已驳回"}
 

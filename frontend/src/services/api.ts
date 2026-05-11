@@ -105,6 +105,14 @@ export const getInvoice = async (id: number): Promise<InvoiceDetail> => {
   return response.data;
 };
 
+// Verify invoice data integrity
+export const verifyInvoice = async (id: number): Promise<{
+  invoice_id: number; valid: boolean; stored_hash: string; current_hash: string; message: string;
+}> => {
+  const response = await api.get(`/invoices/${id}/verify`);
+  return response.data;
+};
+
 // Get invoice file URL
 export const getInvoiceFileUrl = (id: number): string => {
   return `/api/invoices/${id}/file`;

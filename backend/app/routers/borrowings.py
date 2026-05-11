@@ -16,6 +16,7 @@ from app.models.bank_card import BankCard
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.models.notification import Notification
+from app.services.ws_manager import push_notification
 
 router = APIRouter()
 
@@ -121,13 +122,12 @@ async def create_borrowing(
     db.add(b)
 
     # 通知申请人拨款已到账
-    db.add(Notification(
-        user_id=app.user_id,
+    await push_notification(
+        db, app.user_id,
         title="先行拨款已到账",
         message=f"您的事前申请「{app.title}」已获得拨款 ¥{data.estimated_amount:.2f}（{data.title}），请及时报销冲销。",
-        entity_type="borrowing",
-        entity_id=b.id,
-    ))
+        entity_type="borrowing", entity_id=b.id,
+    )
 
     # 银行卡余额变动：找到申请人的默认银行卡，存入拨款
     card = (await db.execute(
@@ -182,13 +182,12 @@ async def approve_borrowing(
     b.status = BorrowingStatus.APPROVED.value
     b.approved_by = current_user["id"]
 
-    db.add(Notification(
-        user_id=b.user_id,
+    await push_notification(
+        db, b.user_id,
         title="借款申请已批准",
         message=f"您的借款「{b.title}」¥{float(b.estimated_amount):.2f} 已批准，请及时报销冲销。",
-        entity_type="borrowing",
-        entity_id=b.id,
-    ))
+        entity_type="borrowing", entity_id=b.id,
+    )
 
     await db.commit()
     await db.refresh(b)
@@ -215,13 +214,12 @@ async def reject_borrowing(
     b.status = BorrowingStatus.REJECTED.value
     b.reject_reason = data.get("reason", "")
 
-    db.add(Notification(
-        user_id=b.user_id,
+    await push_notification(
+        db, b.user_id,
         title="借款申请已驳回",
         message=f"您的借款「{b.title}」已被驳回。原因：{b.reject_reason or '无'}",
-        entity_type="borrowing",
-        entity_id=b.id,
-    ))
+        entity_type="borrowing", entity_id=b.id,
+    )
 
     await db.commit()
     await db.refresh(b)
