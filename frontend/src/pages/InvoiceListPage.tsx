@@ -32,7 +32,7 @@ import {
   listInvoices, deleteInvoice, batchUpdateInvoices,
   batchDeleteInvoices, batchReprocessInvoices, getStatistics,
   createReimbursement, autoConfirmInvoices, getProjects, getBankCards, getApplications, getBorrowings,
-  getReasonCategories, ReasonCategory
+  getReasonCategories, ReasonCategory, suggestCategory
 } from '../services/api';
 import type { Invoice, Statistics } from '../types/invoice';
 import { InvoiceStatus } from '../types/invoice';
@@ -85,6 +85,24 @@ function InvoiceListPage() {
   const [reasonCategories, setReasonCategories] = useState<ReasonCategory[]>([]);
   const [reimbReasonCategory, setReimbReasonCategory] = useState('');
   const [reimbReasonDetail, setReimbReasonDetail] = useState('');
+  const [categoryHint, setCategoryHint] = useState('');           // 智能建议提示文字
+
+  // 根据已选发票智能建议事由类别
+  const autoFillCategory = async (invoiceIds: number[]) => {
+    if (invoiceIds.length === 0) return;
+    try {
+      const res = await suggestCategory({ invoice_ids: invoiceIds });
+      if (res.mode === 'suggestion' && res.suggested_category_name) {
+        setReimbReasonCategory(res.suggested_category_name);
+        setReimbReasonDetail('');
+        setCategoryHint(res.hint);
+      } else {
+        setCategoryHint(res.hint || '');
+      }
+    } catch {
+      setCategoryHint('');
+    }
+  };
 
   // 加载项目列表、银行卡、已通过的申请单
   const loadFormData = async () => {
@@ -344,10 +362,12 @@ function InvoiceListPage() {
       });
 
     if (!allSelectedConfirmed) {
-      message.warning('含有未确认的发票！请仅勾选状态为“已确认”的发票进行报销。');
+      message.warning('含有未确认的发票！请仅勾选状态为”已确认”的发票进行报销。');
       return;
     }
     setIsReimburseModalVisible(true);
+    // 打开弹窗时立刻分析发票类别，自动填入建议
+    autoFillCategory(selectedRowKeys);
   };
 
   const handleCreateReimbursement = async () => {
@@ -369,7 +389,7 @@ function InvoiceListPage() {
       message.success('报销单提交成功！');
       setIsReimburseModalVisible(false);
       reimburseForm.resetFields();
-      setReimbReasonCategory(''); setReimbReasonDetail('');
+      setReimbReasonCategory(''); setReimbReasonDetail(''); setCategoryHint('');
       setSelectedRowKeys([]);
       fetchInvoices();
     } catch (error: any) {
@@ -954,7 +974,7 @@ function InvoiceListPage() {
         onCancel={() => {
           setIsReimburseModalVisible(false);
           reimburseForm.resetFields();
-          setReimbReasonCategory(''); setReimbReasonDetail('');
+          setReimbReasonCategory(''); setReimbReasonDetail(''); setCategoryHint('');
         }}
         confirmLoading={reimbursing}
         okText="提交审批"
@@ -963,6 +983,16 @@ function InvoiceListPage() {
         <div style={{ marginBottom: 16 }}>
           您已选中 <strong style={{ color: '#1890ff' }}>{selectedRowKeys.length}</strong> 张发票，总金额将自动计算。
         </div>
+        {categoryHint && (
+          <div style={{
+            marginBottom: 16, padding: '10px 14px',
+            background: 'linear-gradient(135deg, #f6ffed 0%, #e6f7ff 100%)',
+            border: '1px solid #b7eb8f',
+            borderRadius: 8, fontSize: 13, color: '#389e0d',
+          }}>
+            💡 {categoryHint}
+          </div>
+        )}
         <Form form={reimburseForm} layout="vertical">
           <div style={{ marginBottom: 24 }}>
             <div style={{ marginBottom: 4, fontWeight: 500 }}>报销事由 <span style={{ color: '#E42313' }}>*</span></div>
@@ -1020,8 +1050,11 @@ function InvoiceListPage() {
                     reimburseForm.setFieldsValue({ project_code: app.project_code });
                   }
                 } else {
+                  // 清空申请单 → 重新分析发票类别，自动填入建议
                   setReimbReasonCategory('');
                   setReimbReasonDetail('');
+                  setSelectedAppAmount(0);
+                  autoFillCategory(selectedRowKeys);
                 }
               }}
               options={approvedApps.map(a => ({

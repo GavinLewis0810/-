@@ -23,6 +23,7 @@ class Reimbursement(Base):
     title = Column(String(255), nullable=False)  # 报销事由，如 "参加人工智能大会差旅"
     project_code = Column(String(100), nullable=True)  # 项目编号/课题组
     total_amount = Column(Numeric(12, 2), default=0)  # 报销总金额
+    carbon_kg = Column(Numeric(10, 4), nullable=True, comment="关联发票碳足迹合计(kg CO2)")
 
     # 提交人：外键关联到 users 表
     submitter_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -40,8 +41,8 @@ class Reimbursement(Base):
     ai_reason = Column(Text, nullable=True, comment="AI深度审计意见")
     ai_review_detail = Column(JSONB, nullable=True, comment="AI审查完整报告(含合规状态、备注、明细)")
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     # 收款银行卡
     bank_card_id = Column(Integer, ForeignKey("bank_cards.id"), nullable=True)

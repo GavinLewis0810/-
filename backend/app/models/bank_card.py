@@ -16,6 +16,6 @@ class BankCard(Base):
     is_default = Column(Boolean, default=False)
     balance = Column(Numeric(12, 2), default=0, nullable=False)  # 当前余额
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     user = relationship("User")

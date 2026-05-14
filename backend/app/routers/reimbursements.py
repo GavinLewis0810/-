@@ -19,18 +19,87 @@ from app.models.project import Project
 from app.models.application import Application, ApplicationStatus
 from app.models.bank_card import BankCard
 from app.models.transaction import Transaction
-from app.schemas.reimbursement import ReimbursementCreate, ReimbursementResponse, ReimbursementReview
+from app.schemas.reimbursement import ReimbursementCreate, ReimbursementResponse, ReimbursementReview, CategorySuggestionRequest, CategorySuggestionResponse
 from app.services.reimbursement_service import delete_reimbursement_logic
 from app.services.audit_service import log_audit_no_commit, get_client_info
 from app.services.ws_manager import push_notification, push_notification_to_admins
+from app.services.carbon_config import SPEND_TO_REASON_MAP
+from app.models.reason_category import ReasonCategory
 from app.dependencies import get_current_user
 
 router = APIRouter()
 
 
+@router.post("/category-suggestion", response_model=CategorySuggestionResponse)
+async def suggest_category(
+    data: CategorySuggestionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """根据选中发票的消费类别，智能建议报销事由类别"""
+    # 1. 如果有申请单，直接继承（现有逻辑，这里返回提示）
+    if data.application_id:
+        app = await db.get(Application, data.application_id)
+        if app and app.reason_category_id:
+            rc = await db.get(ReasonCategory, app.reason_category_id)
+            return CategorySuggestionResponse(
+                mode="application_override",
+                suggested_category_id=app.reason_category_id,
+                suggested_category_name=rc.name if rc else None,
+                confidence=1.0,
+                breakdown=[],
+                hint=f"已关联申请单，事由类别从申请单继承：{rc.name if rc else '未知'}",
+            )
+
+    # 2. 查所有选中发票的 spend_category
+    invoices_result = await db.execute(
+        select(Invoice.spend_category).where(Invoice.id.in_(data.invoice_ids))
+    )
+    categories = [row[0] for row in invoices_result.fetchall() if row[0]]
+
+    if not categories:
+        return CategorySuggestionResponse(
+            mode="suggestion",
+            hint="所选发票尚未完成智能分类，请手动选择事由类别",
+        )
+
+    # 3. 每张发票映射到 reason_category
+    mapped: dict[str, int] = {}  # reason_category_name → count
+    breakdown = []
+    for cat in categories:
+        reason_name = SPEND_TO_REASON_MAP.get(cat, "其他费用")
+        mapped[reason_name] = mapped.get(reason_name, 0) + 1
+        breakdown.append({
+            "spend_category": cat,
+            "mapped_category": reason_name,
+        })
+
+    best = max(mapped, key=mapped.get)
+    confidence = mapped[best] / len(categories)
+
+    # 4. 查 reason_category 的实际 ID
+    rc_result = await db.execute(
+        select(ReasonCategory).where(ReasonCategory.name == best, ReasonCategory.is_active == True)
+    )
+    rc = rc_result.scalar_one_or_none()
+
+    detail_parts = [f"{b['spend_category']}→{b['mapped_category']}" for b in breakdown]
+    hint = f"根据 {len(categories)} 张发票内容建议：{best}（{' / '.join(detail_parts)}）"
+
+    return CategorySuggestionResponse(
+        mode="suggestion",
+        suggested_category_id=rc.id if rc else None,
+        suggested_category_name=best,
+        confidence=round(confidence, 2),
+        breakdown=breakdown,
+        hint=hint,
+    )
+
+
 @router.post("", response_model=ReimbursementResponse)
 async def create_reimbursement(
     data: ReimbursementCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -42,6 +111,7 @@ async def create_reimbursement(
         raise HTTPException(status_code=404, detail="未找到指定的发票")
 
     total = sum([inv.total_with_tax for inv in invoices if inv.total_with_tax])
+    total_carbon = sum([float(inv.carbon_kg or 0) for inv in invoices])
 
     # 预算超标检查
     if data.project_code:
@@ -110,6 +180,7 @@ async def create_reimbursement(
         title=data.title,
         project_code=data.project_code,
         total_amount=total,
+        carbon_kg=round(total_carbon, 4) if total_carbon > 0 else None,
         submitter=current_user["username"],
         submitter_id=current_user["id"],
         bank_card_id=data.bank_card_id,
@@ -147,6 +218,17 @@ async def create_reimbursement(
         message=f"员工 {current_user.get('full_name') or current_user.get('username')} 提交了报销单「{reimb.title}」，金额 ¥{float(reimb.total_amount or 0):.2f}，请及时审批。",
         entity_type="reimbursement",
         entity_id=reimb.id,
+    )
+
+    client_info = get_client_info(request)
+    await log_audit_no_commit(
+        db=db,
+        entity_type="reimbursement",
+        entity_id=reimb.id,
+        action="submit",
+        new_value={"status": ReimbursementStatus.SUBMITTED.value, "amount": float(reimb.total_amount or 0)},
+        ip_address=client_info.get("ip_address"),
+        user_agent=client_info.get("user_agent"),
     )
 
     await db.commit()

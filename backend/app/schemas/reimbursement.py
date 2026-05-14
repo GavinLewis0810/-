@@ -22,6 +22,7 @@ class ReimbursementResponse(BaseModel):
     reviewer: Optional[str]
     review_note: Optional[str] = None
     reject_reason: Optional[str]
+    carbon_kg: Optional[float] = None
     status: ReimbursementStatus
     created_at: datetime
     updated_at: datetime
@@ -46,6 +47,20 @@ class ReimbursementResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class CategorySuggestionRequest(BaseModel):
+    invoice_ids: List[int] = Field(..., description="选中的发票 ID 列表")
+    application_id: Optional[int] = Field(None, description="关联的申请单 ID（如有）")
+
+
+class CategorySuggestionResponse(BaseModel):
+    mode: str  # "suggestion" | "application_override"
+    suggested_category_id: Optional[int] = None
+    suggested_category_name: Optional[str] = None
+    confidence: float = 0.0  # 匹配发票数 / 总发票数
+    breakdown: List[Dict[str, Any]] = []
+    hint: str = ""
+
 
 class ReimbursementReview(BaseModel):
     action: str = Field(..., description="APPROVE 或 REJECT")

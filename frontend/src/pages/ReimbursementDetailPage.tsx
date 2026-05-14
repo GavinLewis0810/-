@@ -189,6 +189,13 @@ export default function ReimbursementDetailPage() {
             <Descriptions.Item label="报销总金额">
               <span style={{ color: '#cf1322', fontWeight: 'bold' }}>¥{Number(reimb.total_amount).toFixed(2)}</span>
             </Descriptions.Item>
+            {reimb.carbon_kg != null && (
+              <Descriptions.Item label="🌿 碳足迹合计">
+                <span style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                  {Number(reimb.carbon_kg).toFixed(4)} kg CO₂
+                </span>
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="提交人">{reimb.submitter || '-'}</Descriptions.Item>
             <Descriptions.Item label="审批人">{reimb.reviewer || '待审批'}</Descriptions.Item>
             {reimb.review_note && <Descriptions.Item label="审批意见" span={2}>{reimb.review_note}</Descriptions.Item>}

@@ -26,6 +26,10 @@ const navItems: NavItem[] = [
   { path: '/invoices', label: '发票列表' },
   // 第5步：报销单台账
   { path: '/reimbursements', label: '报销单台账' },
+  // 碳足迹
+  { path: '/carbon-footprint', label: '🌿 碳足迹' },
+  // AI 监控
+  { path: '/ai-observatory', label: '🤖 AI 引擎监控' },
   // 基础设置
   { path: '/bank-cards', label: '收款账户' },
   { path: '/profile', label: '个人信息' },
@@ -33,13 +37,14 @@ const navItems: NavItem[] = [
   { path: '/users', label: '用户管理' },
   { path: '/projects', label: '项目预算' },
   { path: '/approval-rules', label: '审批规则' },
+  { path: '/audit-trail', label: '操作审计' },
 ];
 
 export default function Sidebar({ currentUser, onLogout }: SidebarProps) {
   const location = useLocation();
 
   // 🚀 管理员专属菜单列表
-  const adminOnlyPaths = ['/dashboard', '/users', '/projects', '/approval-rules'];
+  const adminOnlyPaths = ['/dashboard', '/users', '/projects', '/approval-rules', '/audit-trail', '/ai-observatory'];
   const employeeOnlyPaths = ['/bank-cards'];
   const filteredNavItems = navItems.filter(item => {
     if (adminOnlyPaths.includes(item.path) && currentUser?.role !== 'admin') return false;

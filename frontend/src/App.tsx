@@ -14,6 +14,9 @@ import ApplicationPage from './pages/ApplicationPage';
 import RuleEnginePage from './pages/RuleEnginePage';
 import ProfilePage from './pages/ProfilePage';
 import BorrowingPage from './pages/BorrowingPage';
+import CarbonFootprintPage from './pages/CarbonFootprintPage';
+import AuditTrailPage from './pages/AuditTrailPage';
+import AIObservatoryPage from './pages/AIObservatoryPage';
 import AuthPage from './pages/AuthPage';
 
 function AppContent() {
@@ -78,6 +81,7 @@ function AppContent() {
         <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
         <Route path="/reimbursements" element={<ReimbursementListPage />} />
         <Route path="/reimbursements/:id" element={<ReimbursementDetailPage />} />
+        <Route path="/carbon-footprint" element={<CarbonFootprintPage />} />
         {currentUser.role !== 'admin' ? (
           <Route path="/bank-cards" element={<BankCardPage />} />
         ) : (
@@ -104,6 +108,16 @@ function AppContent() {
           <Route path="/approval-rules" element={<RuleEnginePage />} />
         ) : (
            <Route path="/approval-rules" element={<Navigate to="/" replace />} />
+        )}
+        {currentUser.role === 'admin' ? (
+          <Route path="/audit-trail" element={<AuditTrailPage />} />
+        ) : (
+           <Route path="/audit-trail" element={<Navigate to="/" replace />} />
+        )}
+        {currentUser.role === 'admin' ? (
+          <Route path="/ai-observatory" element={<AIObservatoryPage />} />
+        ) : (
+           <Route path="/ai-observatory" element={<Navigate to="/" replace />} />
         )}
       </Routes>
     </MainLayout>

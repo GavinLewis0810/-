@@ -15,7 +15,7 @@ _llm_lock = threading.Lock()
 from app.services.prompts import (
     INVOICE_VISION_PROMPT,
     INVOICE_VISION_SYSTEM_PROMPT,
-    REQUIRED_FIELDS,
+    INVOICE_JSON_SCHEMA,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,11 +116,30 @@ class QwenProvider(BaseLLMProvider):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.1,
-            max_tokens=1000,
+            max_tokens=2000,
         )
         return response.choices[0].message.content.strip()
 
     def vision_completion(self, system_prompt: str, user_prompt: str, image_data: bytes, mime_type: str = "image/png") -> str:
+        # 压缩大图：最长边 > 1600px 时等比缩放，减少 LLM 处理时间
+        try:
+            from io import BytesIO
+            from PIL import Image
+            img = Image.open(BytesIO(image_data))
+            w, h = img.size
+            max_side = max(w, h)
+            if max_side > 1600:
+                ratio = 1600 / max_side
+                new_size = (int(w * ratio), int(h * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+                buf = BytesIO()
+                img_format = 'PNG' if mime_type == 'image/png' else 'JPEG'
+                img.save(buf, format=img_format, optimize=True)
+                image_data = buf.getvalue()
+                logger.info(f"Image resized: {w}x{h} -> {new_size[0]}x{new_size[1]}")
+        except Exception as e:
+            logger.warning(f"Image resize skipped: {e}")
+
         base64_image = base64.b64encode(image_data).decode("utf-8")
         response = self.client.chat.completions.create(
             model=settings.qwen_model or "qwen-vl-plus",
@@ -138,7 +157,7 @@ class QwenProvider(BaseLLMProvider):
                 }
             ],
             temperature=0.01,
-            max_tokens=1500,
+            max_tokens=2000,
         )
         return response.choices[0].message.content.strip()
 
@@ -276,13 +295,23 @@ class LLMService:
         elif "```" in content:
             content = content.split("```")[1].strip()
 
+        # 去除大模型偶尔加的JSON注释（// ... 和 /* ... */）
+        import re
+        content = re.sub(r'//[^\n]*', '', content)          # 行注释
+        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)  # 块注释
+        # 去除尾随逗号（大模型偶尔在最后一个元素后加逗号）
+        content = re.sub(r',\s*}', '}', content)
+        content = re.sub(r',\s*]', ']', content)
+
         try:
             raw_fields = json.loads(content)
         except:
             raw_fields = json.loads(content.strip())
 
+        # 遍历 JSON Schema 中定义的所有字段（不只是 required），防止非必填字段被丢弃
+        all_schema_fields = list(INVOICE_JSON_SCHEMA["properties"].keys())
         fields: Dict[str, Any] = {}
-        for field in REQUIRED_FIELDS:
+        for field in all_schema_fields:
             if field == 'items':
                 raw_items = raw_fields.get('items', [])
                 if not isinstance(raw_items, list):
@@ -319,6 +348,13 @@ class LLMService:
                             cleaned_item[standard_key] = self._normalize_field_value(standard_key, v)
                         cleaned_items.append(cleaned_item)
                 fields['items'] = cleaned_items
+            elif field == 'confidence_scores':
+                # HITL置信度：直接透传LLM返回的confidence_scores对象
+                raw_scores = raw_fields.get('confidence_scores')
+                if isinstance(raw_scores, dict):
+                    fields['confidence_scores'] = raw_scores
+                else:
+                    fields['confidence_scores'] = None
             else:
                 fields[field] = self._normalize_field_value(field, raw_fields.get(field))
 

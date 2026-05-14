@@ -13,4 +13,4 @@ class Project(Base):
     project_name = Column(String(255), nullable=False)
     budget = Column(Numeric(12, 2), nullable=False, default=0)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)

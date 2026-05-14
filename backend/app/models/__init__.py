@@ -1,5 +1,6 @@
 from app.models.user import User
 from app.models.invoice import Invoice, OcrResult, LlmResult, ParsingDiff
+from app.models.image_forensics import ImageForensicsResult
 from app.models.reimbursement import Reimbursement
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification

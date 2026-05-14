@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 # 🚀 1. 在这里导入 auth 路由
-from app.routers import invoices, settings, reimbursements, auth, admin, notifications, projects, bank_cards, applications, approval_rules, borrowings, reason_categories, ws
+from app.routers import invoices, settings, reimbursements, auth, admin, notifications, projects, bank_cards, applications, approval_rules, borrowings, reason_categories, ws, carbon, audit_trail, observability
 
 from app.config import get_settings
 from app.routers import health, invoices, settings as settings_router
@@ -63,6 +63,9 @@ app.include_router(approval_rules.router, prefix="/api/approval-rules", tags=["A
 app.include_router(borrowings.router, prefix="/api/borrowings", tags=["Borrowings"])
 app.include_router(reason_categories.router, prefix="/api/reason-categories", tags=["ReasonCategories"])
 app.include_router(ws.router, prefix="/ws", tags=["WebSocket"])
+app.include_router(carbon.router, tags=["Carbon"])
+app.include_router(audit_trail.router, tags=["Audit"])
+app.include_router(observability.router, tags=["Observability"])
 
 
 # 🚀 3. 终极改造：系统冷启动时自动建表 + 植入超级管理员
@@ -158,6 +161,10 @@ async def startup():
             ")",
             # 外键迁移：新列
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_hash VARCHAR(64)",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS spend_category VARCHAR(50)",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carbon_kg NUMERIC(10,4)",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS green_points INTEGER DEFAULT 0",
+            "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS carbon_kg NUMERIC(10,4)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS submitter_id INTEGER REFERENCES users(id)",
             # 银行卡余额
@@ -174,6 +181,17 @@ async def startup():
             "ALTER TABLE applications ADD COLUMN IF NOT EXISTS reason_category_id INTEGER REFERENCES reason_categories(id)",
             "ALTER TABLE borrowings ADD COLUMN IF NOT EXISTS reason_category_id INTEGER REFERENCES reason_categories(id)",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS reason_category_id INTEGER REFERENCES reason_categories(id)",
+            # AI 引擎调用日志表
+            "CREATE TABLE IF NOT EXISTS ai_call_logs ("
+            " id SERIAL PRIMARY KEY,"
+            " invoice_id INTEGER REFERENCES invoices(id),"
+            " engine VARCHAR(10) NOT NULL,"
+            " status VARCHAR(20) NOT NULL,"
+            " duration_ms INTEGER NOT NULL,"
+            " request_id VARCHAR(36) NOT NULL,"
+            " error_message TEXT,"
+            " created_at TIMESTAMP DEFAULT NOW()"
+            ")",
             # 交易流水表
             "CREATE TABLE IF NOT EXISTS transactions ("
             " id SERIAL PRIMARY KEY,"

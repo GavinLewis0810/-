@@ -16,7 +16,7 @@ class User(Base):
     department = Column(String(100), nullable=True, default=None)
     signature = Column(Text, nullable=True, default=None)  # base64 PNG
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     # 反向关系
     invoices = relationship("Invoice", back_populates="owner_user", foreign_keys="Invoice.owner_id")

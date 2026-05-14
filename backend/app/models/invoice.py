@@ -51,6 +51,11 @@ class Invoice(Base):
     # 🚨 新增：发票明细列表 (使用 PostgreSQL 专属的高性能 JSONB)
     items = Column(JSONB, nullable=True, comment="发票商品明细(JSONB数组)")
 
+    # ESG 碳足迹追踪
+    spend_category = Column(String(50), nullable=True, comment="消费类别(LLM分类)")
+    carbon_kg = Column(Numeric(10, 4), nullable=True, comment="碳足迹(kg CO2)")
+    green_points = Column(Integer, nullable=True, default=0, comment="绿色积分")
+
     # Status management
     status = Column(SQLEnum(InvoiceStatus), default=InvoiceStatus.PENDING, nullable=False)
 
@@ -63,14 +68,15 @@ class Invoice(Base):
     owner = Column(String(100), nullable=True)
 
     # Metadata
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     # Relationships
     owner_user = relationship("User", back_populates="invoices", foreign_keys=[owner_id])
     ocr_result = relationship("OcrResult", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
     llm_result = relationship("LlmResult", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
     parsing_diffs = relationship("ParsingDiff", back_populates="invoice", cascade="all, delete-orphan")
+    forensics_result = relationship("ImageForensicsResult", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
 
     # 报销单外键和反向关联
     reimbursement_id = Column(Integer, ForeignKey("reimbursements.id"), nullable=True)
@@ -101,7 +107,7 @@ class OcrResult(Base):
     tax_rate = Column(String(20), nullable=True)
     tax_amount = Column(String(50), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     invoice = relationship("Invoice", back_populates="ocr_result")
 
@@ -127,7 +133,10 @@ class LlmResult(Base):
     # 🚨 新增：大模型解析的商品明细 (JSONB格式)
     items = Column(JSONB, nullable=True, comment="大模型解析的商品明细")
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # 🚨 HITL置信度：LLM对各字段的自评置信度 (JSONB格式)
+    confidence_scores = Column(JSONB, nullable=True, comment="LLM对各提取字段的自评置信度(0.0-1.0)")
+
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     invoice = relationship("Invoice", back_populates="llm_result")
 
@@ -143,8 +152,11 @@ class ParsingDiff(Base):
     llm_value = Column(Text, nullable=True)  # LLM解析值
     final_value = Column(Text, nullable=True)  # 最终确认值
     source = Column(String(20), nullable=True)  # ocr/llm/manual
+    confidence = Column(Numeric(4, 2), nullable=True, comment="综合融合置信度(0.00-1.00)")
+    ocr_confidence = Column(Numeric(4, 2), nullable=True, comment="OCR字段级置信度(0.00-1.00)")
+    llm_confidence = Column(Numeric(4, 2), nullable=True, comment="LLM自评置信度(0.00-1.00)")
     resolved = Column(Integer, default=0)  # 0=未解决, 1=已解决
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     invoice = relationship("Invoice", back_populates="parsing_diffs")

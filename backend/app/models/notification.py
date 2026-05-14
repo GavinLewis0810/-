@@ -15,4 +15,4 @@ class Notification(Base):
     entity_type = Column(String(50), nullable=True)  # 'reimbursement'
     entity_id = Column(Integer, nullable=True)       # reimbursement.id
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)

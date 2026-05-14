@@ -50,6 +50,12 @@ export const getReimbursementDetail = async (id: number): Promise<Reimbursement>
   return response.data;
 };
 
+// 智能建议事由类别
+export const suggestCategory = async (data: { invoice_ids: number[]; application_id?: number }) => {
+  const response = await api.post('/reimbursements/category-suggestion', data);
+  return response.data;
+};
+
 // 创建报销单（打包发票）
 export const createReimbursement = async (data: ReimbursementCreate): Promise<Reimbursement> => {
   const response = await api.post('/reimbursements', data);
@@ -594,3 +600,86 @@ export const rejectBorrowing = async (id: number, reason: string): Promise<Borro
 export const deleteBorrowing = async (id: number): Promise<void> => {
   await api.delete(`/borrowings/${id}`);
 };
+
+// ========== ESG 碳足迹 API ==========
+import type { CarbonMyStats, CarbonRankItem, CarbonCompanyStats } from '../types/invoice';
+
+export const getCarbonMyStats = async (months = 1): Promise<CarbonMyStats> => {
+  const response = await api.get('/carbon/my-stats', { params: { months } });
+  return response.data;
+};
+
+export const getCarbonRanking = async (months = 1): Promise<CarbonRankItem[]> => {
+  const response = await api.get('/carbon/ranking', { params: { months } });
+  return response.data;
+};
+
+export const getCarbonCompanyStats = async (months = 1): Promise<CarbonCompanyStats> => {
+  const response = await api.get('/carbon/company-stats', { params: { months } });
+  return response.data;
+};
+
+// ========== 操作审计 API ==========
+import type { AuditLogResponse, AuditStats, FlowStat } from '../types/invoice';
+
+export const getAuditLogs = async (params: {
+  page?: number; page_size?: number;
+  entity_type?: string; action?: string; user_id?: string;
+  date_from?: string; date_to?: string;
+}): Promise<AuditLogResponse> => {
+  const response = await api.get('/audit/logs', { params });
+  return response.data;
+};
+
+export const getAuditStats = async (): Promise<AuditStats> => {
+  const response = await api.get('/audit/stats');
+  return response.data;
+};
+
+export const getFlowStats = async (): Promise<FlowStat> => {
+  const response = await api.get('/audit/flow-stats');
+  return response.data;
+};
+
+// ========== AI 可观测性 API ==========
+
+export interface ObservabilityKPI {
+  daily_calls: number;
+  daily_calls_change: number;
+  ocr_avg_latency_ms: number;
+  llm_avg_latency_ms: number;
+  hitl_rate: number;
+}
+
+export interface LineDataPoint {
+  time: string;
+  category: string;
+  value: number;
+}
+
+export interface FunnelDataPoint {
+  stage: string;
+  count: number;
+}
+
+export interface LogEntry {
+  key: string;
+  timestamp: string;
+  requestId: string;
+  engine: string;
+  status: 'success' | 'degraded' | 'circuit_break';
+  duration: number;
+}
+
+export interface ObservabilityStats {
+  kpi: ObservabilityKPI;
+  line_data: LineDataPoint[];
+  funnel_data: FunnelDataPoint[];
+  recent_logs: LogEntry[];
+}
+
+export const getObservabilityStats = async (): Promise<ObservabilityStats> => {
+  const response = await api.get('/observability/stats');
+  return response.data;
+};
+

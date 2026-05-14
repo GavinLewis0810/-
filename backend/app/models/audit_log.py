@@ -35,4 +35,4 @@ class AuditLog(Base):
     details = Column(Text, nullable=True)  # Human-readable description
 
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)

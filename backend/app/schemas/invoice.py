@@ -43,6 +43,10 @@ class InvoiceBase(BaseModel):
     # 🚨 新增：支持多行商品明细的数组
     items: Optional[List[InvoiceItemSchema]] = Field(default=[], description="发票明细列表")
 
+    # ESG 碳足迹
+    spend_category: Optional[str] = Field(None, description="消费类别")
+    carbon_kg: Optional[float] = Field(None, description="碳足迹(kg CO2)")
+
 
 class InvoiceCreate(InvoiceBase):
     pass
@@ -113,6 +117,9 @@ class LlmResultResponse(BaseModel):
     # 🚨 LLM 结果也需要带上解析出的 items 数组
     items: Optional[List[InvoiceItemSchema]] = []
 
+    # 🚨 HITL置信度：LLM对各字段的自评置信度
+    confidence_scores: Optional[Dict[str, Any]] = None
+
     created_at: datetime
 
     class Config:
@@ -127,7 +134,27 @@ class ParsingDiffResponse(BaseModel):
     llm_value: Optional[str] = None
     final_value: Optional[str] = None
     source: Optional[str] = None
+    confidence: Optional[float] = Field(None, description="综合融合置信度(0.00-1.00)")
+    ocr_confidence: Optional[float] = Field(None, description="OCR字段级置信度(0.00-1.00)")
+    llm_confidence: Optional[float] = Field(None, description="LLM自评置信度(0.00-1.00)")
     resolved: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class ImageForensicsResponse(BaseModel):
+    id: int
+    invoice_id: int
+    risk_score: int
+    risk_level: str
+    metadata_result: Optional[Dict[str, Any]] = None
+    ela_result: Optional[Dict[str, Any]] = None
+    jpeg_double_compression_result: Optional[Dict[str, Any]] = None
+    noise_consistency_result: Optional[Dict[str, Any]] = None
+    summary: Optional[str] = None
+    details: Optional[List[str]] = None
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -137,6 +164,7 @@ class InvoiceDetailResponse(InvoiceResponse):
     ocr_result: Optional[OcrResultResponse] = None
     llm_result: Optional[LlmResultResponse] = None
     parsing_diffs: List[ParsingDiffResponse] = []
+    forensics_result: Optional[ImageForensicsResponse] = None
 
 
 class BatchUpdateRequest(BaseModel):
@@ -167,3 +195,85 @@ class ResolveDiffRequest(BaseModel):
     """Request to resolve a parsing diff by selecting a source value."""
     source: str = Field(..., description="'ocr', 'llm', or 'custom'")
     custom_value: Optional[str] = Field(None, description="Custom value if source is 'custom'")
+
+
+# ========== ESG 碳足迹相关 Schema ==========
+
+class CarbonMyStats(BaseModel):
+    """当前用户的碳足迹统计"""
+    total_carbon_kg: float = 0
+    tree_offset: float = 0
+    green_points: int = 0             # 绿色积分
+    point_sources: List[str] = []     # 积分来源明细
+    category_breakdown: List[dict] = []
+    monthly_trend: List[dict] = []
+    rank: int = 0
+    rank_percentile: float = 0
+    suggestion: str = ""
+
+
+class CarbonRankItem(BaseModel):
+    """低碳排名条目（按绿色积分降序）"""
+    rank: int
+    username: str
+    full_name: str
+    department: Optional[str] = None
+    green_points: int = 0             # 绿色积分
+    point_sources: List[str] = []     # 积分来源
+    total_carbon_kg: float = 0        # 碳排放量（仅供参考）
+    invoice_count: int = 0
+    tree_offset: float = 0
+
+
+class CarbonCompanyStats(BaseModel):
+    """全公司碳足迹汇总"""
+    total_carbon_kg: float = 0
+    total_tree_offset: float = 0
+    avg_carbon_per_user: float = 0
+    top_category: str = ""
+    category_breakdown: List[dict] = []
+    monthly_trend: List[dict] = []
+
+
+# ========== 操作审计相关 Schema ==========
+
+class AuditLogItem(BaseModel):
+    id: int
+    entity_type: str
+    entity_id: int
+    action: str
+    old_value: Optional[dict] = None
+    new_value: Optional[dict] = None
+    user_id: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    details: Optional[str] = None
+    created_at: str
+
+
+class AuditLogResponse(BaseModel):
+    items: List[AuditLogItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class AuditStats(BaseModel):
+    today_count: int = 0
+    month_count: int = 0
+    by_action: List[dict] = []
+    by_entity: List[dict] = []
+
+
+class FlowStat(BaseModel):
+    # 最近一笔已完成报销单的精确耗时（分钟）
+    latest_reimb_id: Optional[int] = None
+    latest_submit_to_approve_minutes: float = 0
+    latest_approve_to_pay_minutes: float = 0
+    latest_total_minutes: float = 0
+    # 近30天平均耗时（分钟）
+    avg_submit_to_approve_minutes: float = 0
+    avg_approve_to_pay_minutes: float = 0
+    avg_total_minutes: float = 0
+    # 当前待审批数
+    pending_count: int = 0

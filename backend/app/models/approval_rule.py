@@ -15,4 +15,4 @@ class ApprovalRule(Base):
     conditions = Column(JSONB, nullable=False, default={})
     action = Column(String(50), nullable=False, default="NONE")
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)

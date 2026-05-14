@@ -11,4 +11,4 @@ class ReasonCategory(Base):
     name = Column(String(255), unique=True, nullable=False)
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)

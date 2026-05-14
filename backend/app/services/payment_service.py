@@ -16,7 +16,7 @@ def mock_bank_transfer(reimbursement, bank_card) -> dict:
     # 模拟银行处理延迟（500ms~1.5s随机）
     time.sleep(random.uniform(0.5, 1.5))
 
-    now = datetime.utcnow()
+    now = datetime.now()
     tx_id = f"TRX-{now.strftime('%Y%m%d')}-{random.randint(100000000, 999999999)}"
     batch_no = f"BAT{now.strftime('%Y%m%d%H%M%S')}"
 

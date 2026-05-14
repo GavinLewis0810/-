@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from app.database import get_db
 from app.models.invoice import Invoice, OcrResult, LlmResult, ParsingDiff, InvoiceStatus
+from app.models.image_forensics import ImageForensicsResult
 from app.schemas.invoice import (
     InvoiceResponse, InvoiceListResponse, InvoiceDetailResponse,
     InvoiceUpdate, BatchUpdateRequest, BatchDeleteRequest, StatisticsResponse, UploadResponse,
@@ -330,6 +331,10 @@ async def get_invoice(
     diff_result = await db.execute(diff_query)
     diffs = diff_result.scalars().all()
 
+    forensics_query = select(ImageForensicsResult).where(ImageForensicsResult.invoice_id == invoice_id)
+    forensics_result_data = await db.execute(forensics_query)
+    forensics = forensics_result_data.scalar_one_or_none()
+
     # 🚨 终极修复：删除了原来那些散落的商品字段，加入了 items 数组
     invoice_dict = {
         "id": invoice.id,
@@ -356,6 +361,7 @@ async def get_invoice(
         "ocr_result": ocr,
         "llm_result": llm,
         "parsing_diffs": list(diffs),
+        "forensics_result": forensics,
     }
 
     return InvoiceDetailResponse.model_validate(invoice_dict)
@@ -633,6 +639,7 @@ async def batch_reprocess_invoices(
 @router.post("/{invoice_id}/process")
 async def process_invoice(
         invoice_id: int,
+        request: Request,
         db: AsyncSession = Depends(get_db)
 ):
     """处理发票：运行OCR解析"""
@@ -648,6 +655,16 @@ async def process_invoice(
     success = await do_process(invoice_id, db)
 
     if success:
+        client_info = get_client_info(request)
+        await log_audit_no_commit(
+            db=db, entity_type="invoice", entity_id=invoice_id,
+            action="process_complete",
+            old_value={"status": "PROCESSING"},
+            new_value={"status": "REVIEWING", "source": "ocr+llm"},
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+        await db.commit()
         return {"message": "解析成功", "invoice_id": invoice_id}
     else:
         raise HTTPException(status_code=500, detail="解析失败")

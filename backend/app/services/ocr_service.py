@@ -491,6 +491,16 @@ class FieldExtractor:
 
         return result
 
+    def _extract_buyer_seller_with_confidence(
+        self, text: str, lines: Optional[List[Dict[str, Any]]] = None
+    ) -> Tuple[Dict[str, Optional[str]], Dict[str, Optional[float]]]:
+        """Wrapper: 调用原始提取并额外返回字段级OCR置信度."""
+        result = self._extract_buyer_seller(text, lines)
+        confs = {}
+        for key in ['buyer_name', 'buyer_tax_id', 'seller_name', 'seller_tax_id']:
+            confs[key] = self._find_line_confidence(result.get(key), lines)
+        return result, confs
+
     def _extract_buyer_seller_from_text(
         self,
         text: str,
@@ -709,7 +719,7 @@ class FieldExtractor:
 
         return result
 
-    def extract_fields(self, text: str, lines: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def extract_fields(self, text: str, lines: Optional[List[Dict[str, Any]]] = None) -> Tuple[Dict[str, Any], Dict[str, Optional[float]]]:
         """Extract all invoice fields from OCR text.
 
         Args:
@@ -717,9 +727,10 @@ class FieldExtractor:
             lines: OCR line metadata (with bounding boxes)
 
         Returns:
-            Dictionary of extracted fields
+            Tuple of (fields dict, confidence dict) — confidence is 0-100, None if not found
         """
         fields = {}
+        field_confs = {}
 
         # Log OCR text for debugging (first 500 chars)
         logger.debug(f"OCR text (first 500 chars): {text[:500]}")
@@ -736,6 +747,7 @@ class FieldExtractor:
             # Skip fields with None pattern (they need special extraction)
             if pattern is None:
                 fields[field_name] = None
+                field_confs[field_name] = None
                 continue
 
             try:
@@ -748,20 +760,37 @@ class FieldExtractor:
                         if match.group(i):
                             value = match.group(i).strip()
                             break
-                    fields[field_name] = self._clean_value(value, field_name) if value else None
+                    cleaned = self._clean_value(value, field_name) if value else None
+                    fields[field_name] = cleaned
+                    # 查找匹配值对应的OCR行置信度
+                    field_confs[field_name] = self._find_line_confidence(value if value else match.group(0), lines)
                 else:
                     fields[field_name] = None
+                    field_confs[field_name] = None
             except Exception as e:
                 logger.warning(f"Failed to extract {field_name}: {e}")
                 fields[field_name] = None
+                field_confs[field_name] = None
 
         # For Chinese invoices, use position-based extraction for buyer/seller
         if is_chinese:
-            buyer_seller = self._extract_buyer_seller(text, lines)
+            buyer_seller, bs_confs = self._extract_buyer_seller_with_confidence(text, lines)
             fields['buyer_name'] = buyer_seller['buyer_name']
             fields['buyer_tax_id'] = buyer_seller['buyer_tax_id']
             fields['seller_name'] = buyer_seller['seller_name']
             fields['seller_tax_id'] = buyer_seller['seller_tax_id']
+            field_confs['buyer_name'] = bs_confs.get('buyer_name')
+            field_confs['buyer_tax_id'] = bs_confs.get('buyer_tax_id')
+            field_confs['seller_name'] = bs_confs.get('seller_name')
+            field_confs['seller_tax_id'] = bs_confs.get('seller_tax_id')
+        else:
+            for key in ['buyer_name', 'buyer_tax_id', 'seller_name', 'seller_tax_id']:
+                field_confs[key] = self._find_line_confidence(fields.get(key), lines)
+
+        # Ensure all comparable fields have entries in field_confs
+        for field_name in ['invoice_code', 'tax_rate']:
+            if field_name not in field_confs:
+                field_confs[field_name] = self._find_line_confidence(fields.get(field_name), lines)
 
         # Log extraction results for debugging
         logger.info(f"OCR extracted: buyer={fields.get('buyer_name')}, seller={fields.get('seller_name')}")
@@ -772,6 +801,7 @@ class FieldExtractor:
             fallback_amount = self._extract_amount_from_invoice(text)
             if fallback_amount:
                 fields['amount'] = fallback_amount
+                field_confs['amount'] = self._find_line_confidence(fallback_amount, lines)
                 logger.debug(f"Amount fallback succeeded: {fallback_amount}")
 
         # 备用提取税率
@@ -779,12 +809,13 @@ class FieldExtractor:
                     fallback_rate = self._extract_tax_rate_from_invoice(text)
                     if fallback_rate:
                         fields['tax_rate'] = fallback_rate
+                        field_confs['tax_rate'] = self._find_line_confidence(fallback_rate, lines)
                         logger.debug(f"Tax rate fallback succeeded: {fallback_rate}")
         # ========== 备用提取结束 ==========
         # 补全税额的小数部分（如果原值不完整）
         if 'tax_amount' in fields:
             fields['tax_amount'] = self._refine_tax_amount(text, fields['tax_amount'])
-        return fields
+        return fields, field_confs
 
     def _clean_chinese_spaces(self, text: str) -> str:
         """Remove extra spaces between Chinese characters.
@@ -814,6 +845,25 @@ class FieldExtractor:
 
 
 
+
+    def _find_line_confidence(self, value: Optional[str], lines: Optional[List[Dict[str, Any]]]) -> Optional[float]:
+        """在OCR行元数据中查找匹配值对应的置信度(0-100).
+
+        对多行匹配取平均值。未匹配到返回None。
+        """
+        if not value or not lines:
+            return None
+        value_clean = value.strip().replace(' ', '').replace(',', '')
+        confs = []
+        for line in lines:
+            line_text = line.get('text', '').strip().replace(' ', '').replace(',', '')
+            if value_clean in line_text or line_text in value_clean:
+                conf = line.get('confidence')
+                if conf is not None:
+                    confs.append(float(conf))
+        if confs:
+            return round(sum(confs) / len(confs), 1)
+        return None
 
     def _clean_value(self, value: str, field_name: str) -> Any:
         """Clean and convert field value to appropriate type."""

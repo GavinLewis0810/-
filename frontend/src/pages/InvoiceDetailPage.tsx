@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { CSSProperties } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Descriptions,
@@ -13,6 +14,7 @@ import {
   Modal,
   Table,
   Card,
+  Tooltip,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -25,6 +27,12 @@ import {
   PlusOutlined,
   MinusCircleOutlined,
   SafetyCertificateOutlined,
+  WarningOutlined,
+  BugOutlined,
+  FundOutlined,
+  EyeOutlined,
+  FileImageOutlined,
+  SoundOutlined,
 } from '@ant-design/icons';
 import { getInvoice, getInvoiceFileUrl, updateInvoice, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice } from '../services/api';
 import type { InvoiceDetail } from '../types/invoice';
@@ -45,6 +53,24 @@ const fieldLabels: Record<string, string> = {
   tax_amount: '总税额',
 };
 
+const CONFIDENCE_THRESHOLD = 0.8;
+
+function buildConfidenceMap(diffs: { field_name: string; confidence: number | null }[]): Record<string, number | null> {
+  const map: Record<string, number | null> = {};
+  for (const d of diffs) {
+    map[d.field_name] = d.confidence;
+  }
+  return map;
+}
+
+function getConfidenceStyle(confidence: number | null | undefined): CSSProperties {
+  if (confidence == null) return {};
+  if (confidence < CONFIDENCE_THRESHOLD) {
+    return { background: '#fffbe6', borderColor: '#faad14' };
+  }
+  return { background: '#f6ffed', borderColor: '#52c41a' };
+}
+
 // 💡 商品明细表格的列定义
 const itemColumns = [
   { title: '项目名称', dataIndex: 'item_name', key: 'item_name', render: (v: any) => v || '-' },
@@ -56,6 +82,43 @@ const itemColumns = [
   { title: '税率', dataIndex: 'tax_rate', key: 'tax_rate', render: (v: any) => v || '-' },
   { title: '税额', dataIndex: 'tax_amount', key: 'tax_amount', render: (v: any) => v || '-' },
 ];
+
+// 🔍 取证检测器小徽章
+function ForensicsDetectorBadge({ icon, name, suspicious, findings, span }: {
+  icon: React.ReactNode;
+  name: string;
+  suspicious?: boolean;
+  findings?: string[];
+  span?: number;
+}) {
+  return (
+    <Tooltip title={findings && findings.length > 0 ? findings.join('；') : undefined}>
+      <div style={{
+        padding: '6px 10px',
+        borderRadius: 4,
+        background: suspicious ? '#fff2f0' : '#f6ffed',
+        border: `1px solid ${suspicious ? '#ffccc7' : '#b7eb8f'}`,
+        fontSize: 12,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        gridColumn: span ? `span ${span}` : undefined,
+        cursor: findings && findings.length > 0 ? 'help' : 'default',
+      }}>
+        {icon}
+        <span style={{ fontWeight: 500 }}>{name}</span>
+        <span style={{
+          marginLeft: 'auto',
+          color: suspicious ? '#cf1322' : '#389e0d',
+          fontWeight: 'bold',
+          fontSize: 11,
+        }}>
+          {suspicious ? '⚠ 异常' : '✓ 正常'}
+        </span>
+      </div>
+    </Tooltip>
+  );
+}
 
 function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -235,11 +298,14 @@ function InvoiceDetailPage() {
   const matchCount = invoice.parsing_diffs?.filter(d => d.resolved).length || 0;
   const totalCount = invoice.parsing_diffs?.length || 0;
 
+  // HITL: 构建字段置信度映射，用于高亮低置信度字段
+  const confidenceMap = buildConfidenceMap(invoice.parsing_diffs || []);
+
   return (
     <div className={styles.pageContainer}>
       <div className={styles.pageHeader}>
         <div className={styles.headerLeft}>
-          <button className={styles.backButton} onClick={() => navigate('/')}>
+          <button className={styles.backButton} onClick={() => navigate('/invoices')}>
             <ArrowLeftOutlined />
             返回列表
           </button>
@@ -300,17 +366,53 @@ function InvoiceDetailPage() {
                 <Form form={form} layout="vertical">
                   {/* --- 1. 发票主表字段（头部信息） --- */}
                   <Row gutter={16}>
-                    <Col span={8}><Form.Item name="invoice_number" label="发票号码"><Input /></Form.Item></Col>
-                    <Col span={8}><Form.Item name="issue_date" label="开票日期"><Input /></Form.Item></Col>
-                    <Col span={8}><Form.Item name="total_with_tax" label="价税合计(总额)"><Input type="number" /></Form.Item></Col>
+                    <Col span={8}>
+                      <Form.Item name="invoice_number" label={
+                        <span>发票号码 {confidenceMap.invoice_number != null && confidenceMap.invoice_number < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.invoice_number! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input style={getConfidenceStyle(confidenceMap.invoice_number)} /></Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="issue_date" label={
+                        <span>开票日期 {confidenceMap.issue_date != null && confidenceMap.issue_date < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.issue_date! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input style={getConfidenceStyle(confidenceMap.issue_date)} /></Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="total_with_tax" label={
+                        <span>价税合计(总额) {confidenceMap.total_with_tax != null && confidenceMap.total_with_tax < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.total_with_tax! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input type="number" style={getConfidenceStyle(confidenceMap.total_with_tax)} /></Form.Item>
+                    </Col>
 
-                    <Col span={12}><Form.Item name="buyer_name" label="购买方名称"><Input /></Form.Item></Col>
-                    <Col span={12}><Form.Item name="buyer_tax_id" label="购买方纳税人识别号"><Input /></Form.Item></Col>
-                    <Col span={12}><Form.Item name="seller_name" label="销售方名称"><Input /></Form.Item></Col>
-                    <Col span={12}><Form.Item name="seller_tax_id" label="销售方纳税人识别号"><Input /></Form.Item></Col>
+                    <Col span={12}>
+                      <Form.Item name="buyer_name" label={
+                        <span>购买方名称 {confidenceMap.buyer_name != null && confidenceMap.buyer_name < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.buyer_name! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input style={getConfidenceStyle(confidenceMap.buyer_name)} /></Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="buyer_tax_id" label={
+                        <span>购买方纳税人识别号 {confidenceMap.buyer_tax_id != null && confidenceMap.buyer_tax_id < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.buyer_tax_id! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input style={getConfidenceStyle(confidenceMap.buyer_tax_id)} /></Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="seller_name" label={
+                        <span>销售方名称 {confidenceMap.seller_name != null && confidenceMap.seller_name < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.seller_name! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input style={getConfidenceStyle(confidenceMap.seller_name)} /></Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="seller_tax_id" label={
+                        <span>销售方纳税人识别号 {confidenceMap.seller_tax_id != null && confidenceMap.seller_tax_id < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.seller_tax_id! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input style={getConfidenceStyle(confidenceMap.seller_tax_id)} /></Form.Item>
+                    </Col>
 
-                    <Col span={8}><Form.Item name="amount" label="金额(不含税)"><Input type="number" /></Form.Item></Col>
-                    <Col span={8}><Form.Item name="tax_amount" label="总税额"><Input type="number" /></Form.Item></Col>
+                    <Col span={8}>
+                      <Form.Item name="amount" label={
+                        <span>金额(不含税) {confidenceMap.amount != null && confidenceMap.amount < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.amount! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input type="number" style={getConfidenceStyle(confidenceMap.amount)} /></Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="tax_amount" label={
+                        <span>总税额 {confidenceMap.tax_amount != null && confidenceMap.tax_amount < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.tax_amount! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
+                      }><Input type="number" style={getConfidenceStyle(confidenceMap.tax_amount)} /></Form.Item>
+                    </Col>
                     <Col span={8}>
                       <Form.Item name="status" label="状态">
                         <Select options={Object.values(InvoiceStatus).map((s) => ({ label: s, value: s }))} />
@@ -397,6 +499,16 @@ function InvoiceDetailPage() {
                         {invoice.total_with_tax != null ? `¥${Number(invoice.total_with_tax).toFixed(2)}` : '-'}
                       </span>
                     </Descriptions.Item>
+                    {invoice.spend_category && (
+                      <Descriptions.Item label="🌿 消费类别">{invoice.spend_category}</Descriptions.Item>
+                    )}
+                    {invoice.carbon_kg != null && (
+                      <Descriptions.Item label="🌿 碳足迹" span={invoice.spend_category ? 1 : 2}>
+                        <span style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                          {Number(invoice.carbon_kg).toFixed(4)} kg CO₂
+                        </span>
+                      </Descriptions.Item>
+                    )}
                     {invoice.invoice_hash && (
                       <Descriptions.Item label={<span><SafetyCertificateOutlined style={{ marginRight: 4, color: '#1677ff' }} />数字指纹</span>} span={2}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -510,19 +622,35 @@ function InvoiceDetailPage() {
                 <table className={styles.comparisonTable}>
                   <thead>
                     <tr>
-                      <th style={{ width: '20%' }}>字段</th>
-                      <th style={{ width: '30%' }}>OCR识别结果</th>
-                      <th style={{ width: '30%' }}>LLM解析结果</th>
-                      <th style={{ width: '20%' }}>操作</th>
+                      <th style={{ width: '16%' }}>字段</th>
+                      <th style={{ width: '24%' }}>OCR识别结果</th>
+                      <th style={{ width: '24%' }}>LLM解析结果</th>
+                      <th style={{ width: '14%' }}>置信度</th>
+                      <th style={{ width: '22%' }}>操作</th>
                     </tr>
                   </thead>
                   <tbody>
                     {invoice.parsing_diffs?.map((diff) => {
                       const isMatch = diff.ocr_value === diff.llm_value;
+                      const isLowConf = diff.confidence != null && diff.confidence < CONFIDENCE_THRESHOLD;
                       return (
-                        <tr key={diff.id} className={!isMatch ? styles.mismatch : styles.match}>
+                        <tr
+                          key={diff.id}
+                          className={!isMatch ? styles.mismatch : styles.match}
+                          style={isLowConf ? { background: '#fffbe6' } : undefined}
+                        >
                           <td className={styles.fieldCell}>
                             {fieldLabels[diff.field_name] || diff.field_name}
+                            {isLowConf && (
+                              <Tooltip title={
+                                <div>
+                                  综合置信度偏低，建议核对原图<br />
+                                  OCR: {diff.ocr_confidence != null ? `${(diff.ocr_confidence * 100).toFixed(0)}%` : 'N/A'} | LLM: {diff.llm_confidence != null ? `${(diff.llm_confidence * 100).toFixed(0)}%` : 'N/A'}
+                                </div>
+                              }>
+                                <WarningOutlined style={{ color: '#faad14', marginLeft: 4 }} />
+                              </Tooltip>
+                            )}
                           </td>
                           <td>
                             <div className={styles.valueCell}>
@@ -537,6 +665,33 @@ function InvoiceDetailPage() {
                               {isMatch && <CheckCircleOutlined className={`${styles.statusIcon} ${styles.match}`} />}
                               <span>{diff.llm_value || '-'}</span>
                             </div>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            {diff.confidence != null ? (
+                              <Tooltip
+                                title={
+                                  <div style={{ lineHeight: 1.8 }}>
+                                    <div>OCR: {diff.ocr_confidence != null ? `${(diff.ocr_confidence * 100).toFixed(0)}%` : 'N/A'}</div>
+                                    <div>LLM: {diff.llm_confidence != null ? `${(diff.llm_confidence * 100).toFixed(0)}%` : 'N/A'}</div>
+                                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.3)', marginTop: 4, paddingTop: 4 }}>
+                                      综合: {(diff.confidence * 100).toFixed(0)}% {diff.ocr_value && diff.llm_value && diff.ocr_value !== diff.llm_value ? '(冲突-0.15)' : ''}
+                                    </div>
+                                  </div>
+                                }
+                              >
+                                <span style={{
+                                  color: diff.confidence < CONFIDENCE_THRESHOLD ? '#d48806' : '#389e0d',
+                                  fontWeight: 'bold',
+                                  fontSize: 14,
+                                  cursor: 'help',
+                                  borderBottom: '1px dashed currentColor',
+                                }}>
+                                  {(diff.confidence * 100).toFixed(0)}%
+                                </span>
+                              </Tooltip>
+                            ) : (
+                              <span style={{ color: '#ccc' }}>-</span>
+                            )}
                           </td>
                           <td>
                             {!diff.resolved && !isMatch && (
@@ -595,6 +750,145 @@ function InvoiceDetailPage() {
             </div>
             </Spin>
           </div>
+
+          {/* 🔍 图像取证分析面板 */}
+          {invoice.forensics_result && (
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardTitle}>
+                  <BugOutlined style={{ marginRight: 8 }} />
+                  图像取证分析
+                  {invoice.forensics_result.risk_level === 'high' && (
+                    <StatusTag status="error">高风险</StatusTag>
+                  )}
+                  {invoice.forensics_result.risk_level === 'medium' && (
+                    <StatusTag status="warning">中风险</StatusTag>
+                  )}
+                  {invoice.forensics_result.risk_level === 'low' && (
+                    <StatusTag status="success">低风险</StatusTag>
+                  )}
+                  {invoice.forensics_result.risk_level === 'unknown' && (
+                    <span style={{
+                      fontSize: 12,
+                      padding: '2px 8px',
+                      borderRadius: 4,
+                      background: '#f5f5f5',
+                      color: '#999',
+                    }}>未知</span>
+                  )}
+                </div>
+              </div>
+              <div className={styles.cardBody}>
+                {/* 风险评分条 */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>综合风险评分</span>
+                    <span style={{
+                      fontWeight: 'bold',
+                      color: invoice.forensics_result.risk_score >= 70 ? '#cf1322'
+                           : invoice.forensics_result.risk_score >= 40 ? '#d48806'
+                           : '#389e0d',
+                      fontSize: 18,
+                    }}>
+                      {invoice.forensics_result.risk_score}/100
+                    </span>
+                  </div>
+                  <div style={{
+                    height: 10,
+                    borderRadius: 5,
+                    background: '#f0f0f0',
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${Math.min(100, invoice.forensics_result.risk_score)}%`,
+                      borderRadius: 5,
+                      background: invoice.forensics_result.risk_score >= 70
+                        ? 'linear-gradient(90deg, #ff4d4f, #ff7a45)'
+                        : invoice.forensics_result.risk_score >= 40
+                        ? 'linear-gradient(90deg, #faad14, #ffc53d)'
+                        : 'linear-gradient(90deg, #52c41a, #73d13d)',
+                      transition: 'width 0.5s ease',
+                    }} />
+                  </div>
+                </div>
+
+                {/* 摘要 */}
+                <div style={{
+                  padding: '10px 14px',
+                  borderRadius: 6,
+                  background: invoice.forensics_result.risk_level === 'high' ? '#fff2f0'
+                           : invoice.forensics_result.risk_level === 'medium' ? '#fffbe6'
+                           : '#f6ffed',
+                  border: `1px solid ${invoice.forensics_result.risk_level === 'high' ? '#ffccc7'
+                           : invoice.forensics_result.risk_level === 'medium' ? '#ffe58f'
+                           : '#b7eb8f'}`,
+                  marginBottom: 16,
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}>
+                  <SafetyCertificateOutlined style={{ marginRight: 6, color: invoice.forensics_result.risk_level === 'high' ? '#cf1322' : invoice.forensics_result.risk_level === 'medium' ? '#d48806' : '#389e0d' }} />
+                  {invoice.forensics_result.summary || '暂无摘要'}
+                </div>
+
+                {/* 详细发现列表 */}
+                {invoice.forensics_result.details && invoice.forensics_result.details.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>
+                      <FundOutlined style={{ marginRight: 4 }} />
+                      检测发现 ({invoice.forensics_result.details.length} 条)
+                    </div>
+                    <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                      {invoice.forensics_result.details.map((d, i) => (
+                        <div key={i} style={{
+                          padding: '6px 10px',
+                          marginBottom: 4,
+                          borderRadius: 4,
+                          background: '#fafafa',
+                          fontSize: 12,
+                          lineHeight: 1.5,
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 6,
+                        }}>
+                          <span style={{ color: '#faad14', flexShrink: 0 }}>●</span>
+                          <span>{d}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 各检测器得分概要 */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <ForensicsDetectorBadge
+                    icon={<FileImageOutlined />}
+                    name="元数据"
+                    suspicious={invoice.forensics_result.metadata_result?.suspicious}
+                    findings={invoice.forensics_result.metadata_result?.findings}
+                  />
+                  <ForensicsDetectorBadge
+                    icon={<EyeOutlined />}
+                    name="ELA 误差分析"
+                    suspicious={invoice.forensics_result.ela_result?.suspicious}
+                    findings={invoice.forensics_result.ela_result?.findings}
+                  />
+                  <ForensicsDetectorBadge
+                    icon={<SoundOutlined />}
+                    name="JPEG 双重压缩"
+                    suspicious={invoice.forensics_result.jpeg_double_compression_result?.suspicious}
+                    findings={invoice.forensics_result.jpeg_double_compression_result?.findings}
+                  />
+                  <ForensicsDetectorBadge
+                    icon={<FundOutlined />}
+                    name="噪声一致性"
+                    suspicious={invoice.forensics_result.noise_consistency_result?.suspicious}
+                    findings={invoice.forensics_result.noise_consistency_result?.findings}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <Modal
             title={`自定义值 - ${fieldLabels[customValueModal.fieldName] || customValueModal.fieldName}`}

@@ -45,8 +45,84 @@ export interface Invoice {
   owner_id: number | null;
   reimbursement_id: number | null;
   invoice_hash: string | null;
+  spend_category: string | null;
+  carbon_kg: number | null;
   created_at: string;
   updated_at: string;
+}
+
+// 碳足迹相关类型
+export interface CarbonMyStats {
+  total_carbon_kg: number;
+  tree_offset: number;
+  green_points: number;
+  point_sources: string[];
+  category_breakdown: { category: string; carbon_kg: number; count: number }[];
+  monthly_trend: { month: string; carbon_kg: number }[];
+  rank: number;
+  rank_percentile: number;
+  suggestion: string;
+}
+
+export interface CarbonRankItem {
+  rank: number;
+  username: string;
+  full_name: string;
+  department: string | null;
+  green_points: number;
+  point_sources: string[];
+  total_carbon_kg: number;
+  invoice_count: number;
+  tree_offset: number;
+}
+
+export interface CarbonCompanyStats {
+  total_carbon_kg: number;
+  total_tree_offset: number;
+  avg_carbon_per_user: number;
+  top_category: string;
+  category_breakdown: { category: string; carbon_kg: number }[];
+  monthly_trend: { month: string; carbon_kg: number }[];
+}
+
+// 操作审计相关类型
+export interface AuditLogItem {
+  id: number;
+  entity_type: string;
+  entity_id: number;
+  action: string;
+  old_value: Record<string, any> | null;
+  new_value: Record<string, any> | null;
+  user_id: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  details: string | null;
+  created_at: string;
+}
+
+export interface AuditLogResponse {
+  items: AuditLogItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AuditStats {
+  today_count: number;
+  month_count: number;
+  by_action: { action: string; count: number }[];
+  by_entity: { entity_type: string; count: number }[];
+}
+
+export interface FlowStat {
+  latest_reimb_id: number | null;
+  latest_submit_to_approve_minutes: number;
+  latest_approve_to_pay_minutes: number;
+  latest_total_minutes: number;
+  avg_submit_to_approve_minutes: number;
+  avg_approve_to_pay_minutes: number;
+  avg_total_minutes: number;
+  pending_count: number;
 }
 
 export interface OcrResult {
@@ -83,6 +159,9 @@ export interface LlmResult {
   // 🚨 LLM 的解析结果也会包含这个商品明细数组
   items?: InvoiceItem[] | null;
 
+  // 🚨 HITL置信度：LLM对各字段的自评置信度
+  confidence_scores?: Record<string, number> | null;
+
   created_at: string;
 }
 
@@ -94,13 +173,31 @@ export interface ParsingDiff {
   llm_value: string | null;
   final_value: string | null;
   source: string | null;
+  confidence: number | null;      // 综合融合置信度 (0.00-1.00)
+  ocr_confidence: number | null;  // OCR字段级置信度 (0.00-1.00)
+  llm_confidence: number | null;  // LLM自评置信度 (0.00-1.00)
   resolved: number;
+}
+
+export interface ImageForensicsResult {
+  id: number;
+  invoice_id: number;
+  risk_score: number;       // 0-100
+  risk_level: string;        // 'low' | 'medium' | 'high' | 'unknown'
+  metadata_result: Record<string, any> | null;
+  ela_result: Record<string, any> | null;
+  jpeg_double_compression_result: Record<string, any> | null;
+  noise_consistency_result: Record<string, any> | null;
+  summary: string | null;
+  details: string[] | null;
+  created_at: string;
 }
 
 export interface InvoiceDetail extends Invoice {
   ocr_result: OcrResult | null;
   llm_result: LlmResult | null;
   parsing_diffs: ParsingDiff[];
+  forensics_result: ImageForensicsResult | null;
 }
 
 export interface InvoiceListResponse {
@@ -173,6 +270,7 @@ export interface Reimbursement {
     repaid_amount: number | null;
     status: string;
   } | null;
+  carbon_kg?: number | null; // 碳足迹合计
   invoices?: Invoice[]; // 关联的发票列表（详情接口返回完整数据）
 }
 // 创建报销单的请求载荷

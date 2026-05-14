@@ -17,7 +17,7 @@ class Transaction(Base):
     balance_before = Column(Numeric(12, 2), nullable=False)
     balance_after = Column(Numeric(12, 2), nullable=False)
     note = Column(String(300), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     bank_card = relationship("BankCard")
     borrowing = relationship("Borrowing")

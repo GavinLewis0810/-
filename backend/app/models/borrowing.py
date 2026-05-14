@@ -34,8 +34,8 @@ class Borrowing(Base):
     reimbursement_id = Column(Integer, ForeignKey("reimbursements.id"), nullable=True)
     repaid_amount = Column(Numeric(12, 2), nullable=True)  # 实际冲销金额
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
     # 关系
     user = relationship("User", foreign_keys=[user_id])
