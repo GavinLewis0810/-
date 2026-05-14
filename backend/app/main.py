@@ -164,6 +164,7 @@ async def startup():
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS spend_category VARCHAR(50)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carbon_kg NUMERIC(10,4)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS green_points INTEGER DEFAULT 0",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS ground_truth JSONB",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS carbon_kg NUMERIC(10,4)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS submitter_id INTEGER REFERENCES users(id)",

@@ -66,11 +66,17 @@ class InvoiceResponse(InvoiceBase):
     owner_id: Optional[int] = None
     reimbursement_id: Optional[int] = None
     invoice_hash: Optional[str] = None
+    ground_truth: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class GroundTruthSave(BaseModel):
+    """保存人工标注真值"""
+    fields: Dict[str, str] = Field(..., description="字段名→真值，如 {'invoice_number': '12345678', ...}")
 
 
 class InvoiceListResponse(BaseModel):

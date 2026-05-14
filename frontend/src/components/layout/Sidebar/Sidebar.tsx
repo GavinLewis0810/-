@@ -1,4 +1,4 @@
-import { Link, useLocation } from 'react-router-dom';
+﻿import { Link, useLocation } from 'react-router-dom';
 import { Tooltip } from 'antd';
 import { LogoutOutlined } from '@ant-design/icons';
 import styles from './Sidebar.module.css';
@@ -30,6 +30,7 @@ const navItems: NavItem[] = [
   { path: '/carbon-footprint', label: '🌿 碳足迹' },
   // AI 监控
   { path: '/ai-observatory', label: '🤖 AI 引擎监控' },
+	  { path: '/evaluation', label: '📊 精度评估' },
   // 基础设置
   { path: '/bank-cards', label: '收款账户' },
   { path: '/profile', label: '个人信息' },

@@ -15,7 +15,7 @@ from app.models.image_forensics import ImageForensicsResult
 from app.schemas.invoice import (
     InvoiceResponse, InvoiceListResponse, InvoiceDetailResponse,
     InvoiceUpdate, BatchUpdateRequest, BatchDeleteRequest, StatisticsResponse, UploadResponse,
-    ResolveDiffRequest
+    ResolveDiffRequest, GroundTruthSave
 )
 from app.config import get_settings
 from app.services.audit_service import log_audit_no_commit, get_client_info
@@ -356,6 +356,7 @@ async def get_invoice(
         "owner_id": invoice.owner_id,
         "reimbursement_id": invoice.reimbursement_id,
         "invoice_hash": invoice.invoice_hash,
+        "ground_truth": invoice.ground_truth,
         "created_at": invoice.created_at,
         "updated_at": invoice.updated_at,
         "ocr_result": ocr,
@@ -472,6 +473,207 @@ async def update_invoice(
     await db.refresh(invoice)
 
     return InvoiceResponse.model_validate(invoice)
+
+
+@router.post("/{invoice_id}/ground-truth")
+async def save_ground_truth(
+        invoice_id: int,
+        body: GroundTruthSave,
+        request: Request,
+        db: AsyncSession = Depends(get_db)
+):
+    """保存人工标注真值，用于双引擎精度评估"""
+    query = select(Invoice).where(Invoice.id == invoice_id)
+    result = await db.execute(query)
+    invoice = result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(status_code=404, detail="发票不存在")
+
+    invoice.ground_truth = body.fields
+    await db.commit()
+    await db.refresh(invoice)
+
+    client_info = get_client_info(request)
+    await log_audit_no_commit(
+        db=db, entity_type="invoice", entity_id=invoice_id,
+        action="set_ground_truth",
+        new_value=body.fields,
+        ip_address=client_info.get("ip_address"),
+        user_agent=client_info.get("user_agent"),
+    )
+    await db.commit()
+    return {"message": "真值已保存", "invoice_id": invoice_id, "fields_count": len(body.fields)}
+
+
+# ── 双引擎精度评估 ──────────────────────────────────────────────
+
+_EVAL_FIELDS = [
+    'invoice_number', 'issue_date', 'buyer_name', 'buyer_tax_id',
+    'seller_name', 'seller_tax_id', 'total_with_tax', 'amount', 'tax_amount',
+]
+_EVAL_NUMERIC = {'total_with_tax', 'amount', 'tax_amount'}
+_EVAL_LABELS = {
+    'invoice_number': '发票号码', 'issue_date': '开票日期',
+    'buyer_name': '购买方名称', 'buyer_tax_id': '购买方纳税人识别号',
+    'seller_name': '销售方名称', 'seller_tax_id': '销售方纳税人识别号',
+    'total_with_tax': '价税合计', 'amount': '总金额', 'tax_amount': '总税额',
+}
+
+
+@router.get("/eval/accuracy")
+async def eval_accuracy(db: AsyncSession = Depends(get_db)):
+    """双引擎字段提取精度评估，返回结构化JSON供前端可视化"""
+    from sqlalchemy import text as sa_text
+
+    # Load all invoices with ground_truth
+    inv_q = await db.execute(
+        select(Invoice.id, Invoice.file_name, Invoice.ground_truth)
+        .where(Invoice.ground_truth.isnot(None))
+    )
+    gt_rows = inv_q.all()
+    if not gt_rows:
+        return {"annotated_count": 0, "message": "暂无标注数据"}
+
+    per_field = {f: {'ocr_correct': 0, 'llm_correct': 0, 'fusion_correct': 0, 'total': 0}
+                 for f in _EVAL_FIELDS}
+    overall = {'ocr_correct': 0, 'llm_correct': 0, 'fusion_correct': 0, 'total': 0}
+    cv_stats = {'agree': 0, 'agree_both_ok': 0, 'agree_both_bad': 0,
+                'disagree': 0, 'disagree_ocr_ok': 0, 'disagree_llm_ok': 0,
+                'disagree_neither': 0}
+
+    for inv_id, _, gt_json in gt_rows:
+        gt = gt_json if isinstance(gt_json, dict) else {}
+
+        # OCR
+        ocr_row = (await db.execute(
+            select(OcrResult).where(OcrResult.invoice_id == inv_id)
+        )).scalar_one_or_none()
+        # LLM
+        llm_row = (await db.execute(
+            select(LlmResult).where(LlmResult.invoice_id == inv_id)
+        )).scalar_one_or_none()
+        # Fusion
+        diffs = (await db.execute(
+            select(ParsingDiff).where(ParsingDiff.invoice_id == inv_id)
+        )).scalars().all()
+        fusion_map = {d.field_name: d.final_value for d in diffs}
+
+        for field in _EVAL_FIELDS:
+            gt_val = _norm(gt.get(field), field)
+            if not gt_val:
+                continue
+
+            ocr_val = _norm(getattr(ocr_row, field, None) if ocr_row else None, field)
+            llm_val = _norm(getattr(llm_row, field, None) if llm_row else None, field)
+            fusion_val = _norm(fusion_map.get(field), field)
+
+            ocr_ok = _eval_eq(ocr_val, gt_val, field)
+            llm_ok = _eval_eq(llm_val, gt_val, field)
+            fusion_ok = _eval_eq(fusion_val, gt_val, field)
+
+            per_field[field]['ocr_correct'] += int(ocr_ok)
+            per_field[field]['llm_correct'] += int(llm_ok)
+            per_field[field]['fusion_correct'] += int(fusion_ok)
+            per_field[field]['total'] += 1
+            overall['ocr_correct'] += int(ocr_ok)
+            overall['llm_correct'] += int(llm_ok)
+            overall['fusion_correct'] += int(fusion_ok)
+            overall['total'] += 1
+
+            # Cross-validation
+            if ocr_val and llm_val:
+                if ocr_val == llm_val:
+                    cv_stats['agree'] += 1
+                    if ocr_ok and llm_ok:
+                        cv_stats['agree_both_ok'] += 1
+                    elif not ocr_ok and not llm_ok:
+                        cv_stats['agree_both_bad'] += 1
+                else:
+                    cv_stats['disagree'] += 1
+                    if ocr_ok:
+                        cv_stats['disagree_ocr_ok'] += 1
+                    if llm_ok:
+                        cv_stats['disagree_llm_ok'] += 1
+                    if not ocr_ok and not llm_ok:
+                        cv_stats['disagree_neither'] += 1
+
+    # Build per-field list
+    fields_out = []
+    for f in _EVAL_FIELDS:
+        st = per_field[f]
+        if st['total'] == 0:
+            continue
+        fields_out.append({
+            'field': f,
+            'label': _EVAL_LABELS.get(f, f),
+            'ocr': round(st['ocr_correct'] / st['total'], 4),
+            'llm': round(st['llm_correct'] / st['total'], 4),
+            'fusion': round(st['fusion_correct'] / st['total'], 4),
+            'samples': st['total'],
+        })
+
+    total = overall['total']
+    agree = cv_stats['agree']
+    disagree = cv_stats['disagree']
+    pairs = agree + disagree
+    auto_pass = cv_stats['agree_both_ok']
+
+    return {
+        'annotated_count': len(gt_rows),
+        'total_fields': total,
+        'overall': {
+            'ocr': round(overall['ocr_correct'] / total, 4) if total else 0,
+            'llm': round(overall['llm_correct'] / total, 4) if total else 0,
+            'fusion': round(overall['fusion_correct'] / total, 4) if total else 0,
+        },
+        'per_field': fields_out,
+        'cross_validation': {
+            'agree_rate': round(agree / pairs, 4) if pairs else 0,
+            'agree_both_correct': round(cv_stats['agree_both_ok'] / agree, 4) if agree else 0,
+            'agree_both_wrong': round(cv_stats['agree_both_bad'] / agree, 4) if agree else 0,
+            'disagree_rate': round(disagree / pairs, 4) if pairs else 0,
+            'disagree_ocr_correct': round(cv_stats['disagree_ocr_ok'] / disagree, 4) if disagree else 0,
+            'disagree_llm_correct': round(cv_stats['disagree_llm_ok'] / disagree, 4) if disagree else 0,
+            'disagree_neither': round(cv_stats['disagree_neither'] / disagree, 4) if disagree else 0,
+        },
+        'review_savings': {
+            'auto_pass_rate': round(auto_pass / pairs, 4) if pairs else 0,
+            'auto_pass_count': auto_pass,
+            'need_review_count': pairs - auto_pass,
+        },
+    }
+
+
+def _norm(value, field: str) -> str:
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if field in _EVAL_NUMERIC:
+        s = s.replace('¥', '').replace('￥', '').replace(',', '').replace(' ', '')
+        try:
+            s = f"{float(s):.2f}"
+        except ValueError:
+            pass
+    if field == 'issue_date':
+        s = s.replace('/', '-').replace('.', '-')
+    return s
+
+
+def _eval_eq(v1: str, v2: str, field: str) -> bool:
+    if not v1 and not v2:
+        return True
+    if not v1 or not v2:
+        return False
+    if field in _EVAL_NUMERIC:
+        try:
+            n1, n2 = float(v1), float(v2)
+            if n2 == 0:
+                return n1 == 0
+            return abs(n1 - n2) / abs(n2) < 0.01
+        except ValueError:
+            return v1 == v2
+    return v1 == v2
 
 
 @router.post("/batch-update")

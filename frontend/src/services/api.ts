@@ -6,6 +6,7 @@ import type {
   Statistics,
   UploadResponse,
   UserProfile,
+  EvalAccuracy,
 } from '../types/invoice';
 
 import type { Reimbursement, ReimbursementCreate } from '../types/invoice';
@@ -116,6 +117,20 @@ export const verifyInvoice = async (id: number): Promise<{
   invoice_id: number; valid: boolean; stored_hash: string; current_hash: string; message: string;
 }> => {
   const response = await api.get(`/invoices/${id}/verify`);
+  return response.data;
+};
+
+// Save ground truth for evaluation
+export const saveGroundTruth = async (id: number, fields: Record<string, string>): Promise<{
+  message: string; invoice_id: number; fields_count: number;
+}> => {
+  const response = await api.post(`/invoices/${id}/ground-truth`, { fields });
+  return response.data;
+};
+
+// Eval accuracy
+export const getEvalAccuracy = async (): Promise<EvalAccuracy> => {
+  const response = await api.get('/invoices/eval/accuracy');
   return response.data;
 };
 

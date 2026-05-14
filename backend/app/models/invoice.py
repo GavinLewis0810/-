@@ -62,6 +62,9 @@ class Invoice(Base):
     # 数据防篡改：SHA-256 数字指纹
     invoice_hash = Column(String(64), nullable=True, comment="SHA-256数据完整性校验哈希")
 
+    # 人工标注真值（用于双引擎精度评估）
+    ground_truth = Column(JSONB, nullable=True, comment="人工标注字段真值，格式同ParsingDiff字段名")
+
     # 归属人：外键关联到 users 表
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     # 保留旧字段用于数据迁移（迁移后可删除）

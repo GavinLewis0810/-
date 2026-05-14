@@ -34,7 +34,7 @@ import {
   FileImageOutlined,
   SoundOutlined,
 } from '@ant-design/icons';
-import { getInvoice, getInvoiceFileUrl, updateInvoice, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice } from '../services/api';
+import { getInvoice, getInvoiceFileUrl, updateInvoice, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice, saveGroundTruth } from '../services/api';
 import type { InvoiceDetail } from '../types/invoice';
 import { InvoiceStatus } from '../types/invoice';
 import StatusTag from '../components/StatusTag';
@@ -138,6 +138,11 @@ function InvoiceDetailPage() {
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ valid: boolean; message: string; stored_hash: string; current_hash: string } | null>(null);
 
+  // 真值标注
+  const [gtModalOpen, setGtModalOpen] = useState(false);
+  const [gtFields, setGtFields] = useState<Record<string, string>>({});
+  const [savingGt, setSavingGt] = useState(false);
+
   const handleVerify = async () => {
     if (!id) return;
     setVerifying(true);
@@ -154,6 +159,43 @@ function InvoiceDetailPage() {
       message.error(e?.response?.data?.detail || '校验失败');
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const handleOpenGtModal = () => {
+    // Pre-fill with current confirmed values
+    const defaults: Record<string, string> = {};
+    for (const field of Object.keys(fieldLabels)) {
+      const val = invoice ? String((invoice as any)[field] ?? '') : '';
+      defaults[field] = val;
+    }
+    // Override with existing ground truth if present
+    if (invoice?.ground_truth) {
+      for (const [k, v] of Object.entries(invoice.ground_truth)) {
+        defaults[k] = String(v ?? '');
+      }
+    }
+    setGtFields(defaults);
+    setGtModalOpen(true);
+  };
+
+  const handleSaveGt = async () => {
+    if (!id) return;
+    setSavingGt(true);
+    try {
+      const cleaned: Record<string, string> = {};
+      for (const [k, v] of Object.entries(gtFields)) {
+        const trimmed = v.trim();
+        if (trimmed) cleaned[k] = trimmed;
+      }
+      await saveGroundTruth(parseInt(id), cleaned);
+      message.success('真值已保存');
+      setGtModalOpen(false);
+      fetchInvoice();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '保存真值失败');
+    } finally {
+      setSavingGt(false);
     }
   };
 
@@ -332,6 +374,13 @@ function InvoiceDetailPage() {
             }}
           >
             {invoice.status === '已确认' ? '已确认' : '确认发票'}
+          </button>
+          <button
+            className={styles.confirmButton}
+            onClick={handleOpenGtModal}
+            style={{ background: '#1677ff' }}
+          >
+            {invoice.ground_truth ? '已标注真值' : '设为真值'}
           </button>
         </div>
       </div>
@@ -906,6 +955,37 @@ function InvoiceDetailPage() {
               onChange={(e) => setCustomValue(e.target.value)}
               placeholder="请输入自定义值"
             />
+          </Modal>
+
+          {/* 真值标注 Modal */}
+          <Modal
+            title="人工标注真值 (Ground Truth)"
+            open={gtModalOpen}
+            onOk={handleSaveGt}
+            onCancel={() => setGtModalOpen(false)}
+            okText="保存真值"
+            cancelText="取消"
+            confirmLoading={savingGt}
+            width={600}
+          >
+            <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+              请根据原始发票图片逐字段核对并修正，填入的值将被视为正确答案用于精度评估。
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
+              {Object.keys(fieldLabels).map((field) => (
+                <div key={field} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 500, minWidth: 90, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {fieldLabels[field]}
+                  </span>
+                  <Input
+                    size="small"
+                    value={gtFields[field] || ''}
+                    onChange={(e) => setGtFields({ ...gtFields, [field]: e.target.value })}
+                    style={{ flex: 1 }}
+                  />
+                </div>
+              ))}
+            </div>
           </Modal>
         </div>
 

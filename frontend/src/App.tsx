@@ -17,6 +17,7 @@ import BorrowingPage from './pages/BorrowingPage';
 import CarbonFootprintPage from './pages/CarbonFootprintPage';
 import AuditTrailPage from './pages/AuditTrailPage';
 import AIObservatoryPage from './pages/AIObservatoryPage';
+import EvaluationPage from './pages/EvaluationPage';
 import AuthPage from './pages/AuthPage';
 
 function AppContent() {
@@ -82,6 +83,7 @@ function AppContent() {
         <Route path="/reimbursements" element={<ReimbursementListPage />} />
         <Route path="/reimbursements/:id" element={<ReimbursementDetailPage />} />
         <Route path="/carbon-footprint" element={<CarbonFootprintPage />} />
+        <Route path="/evaluation" element={<EvaluationPage />} />
         {currentUser.role !== 'admin' ? (
           <Route path="/bank-cards" element={<BankCardPage />} />
         ) : (

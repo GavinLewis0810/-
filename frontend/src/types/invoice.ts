@@ -45,6 +45,7 @@ export interface Invoice {
   owner_id: number | null;
   reimbursement_id: number | null;
   invoice_hash: string | null;
+  ground_truth: Record<string, any> | null;
   spend_category: string | null;
   carbon_kg: number | null;
   created_at: string;
@@ -219,6 +220,28 @@ export interface UploadResponse {
   file_name: string;
   status: string;
   message: string;
+}
+
+// 双引擎精度评估
+export interface EvalAccuracy {
+  annotated_count: number;
+  total_fields: number;
+  overall: { ocr: number; llm: number; fusion: number };
+  per_field: { field: string; label: string; ocr: number; llm: number; fusion: number; samples: number }[];
+  cross_validation: {
+    agree_rate: number;
+    agree_both_correct: number;
+    agree_both_wrong: number;
+    disagree_rate: number;
+    disagree_ocr_correct: number;
+    disagree_llm_correct: number;
+    disagree_neither: number;
+  };
+  review_savings: {
+    auto_pass_rate: number;
+    auto_pass_count: number;
+    need_review_count: number;
+  };
 }
 
 // 用户个人信息（电子签名）
