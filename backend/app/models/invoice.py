@@ -80,6 +80,7 @@ class Invoice(Base):
     llm_result = relationship("LlmResult", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
     parsing_diffs = relationship("ParsingDiff", back_populates="invoice", cascade="all, delete-orphan")
     forensics_result = relationship("ImageForensicsResult", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
+    ai_call_logs = relationship("AICallLog", back_populates="invoice", cascade="all, delete-orphan")
 
     # 报销单外键和反向关联
     reimbursement_id = Column(Integer, ForeignKey("reimbursements.id"), nullable=True)

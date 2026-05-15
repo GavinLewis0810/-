@@ -121,24 +121,28 @@ class QwenProvider(BaseLLMProvider):
         return response.choices[0].message.content.strip()
 
     def vision_completion(self, system_prompt: str, user_prompt: str, image_data: bytes, mime_type: str = "image/png") -> str:
-        # 压缩大图：最长边 > 1600px 时等比缩放，减少 LLM 处理时间
+        # 压缩图片：最长边 > 1200px 时等比缩放，转JPEG减少体积
         try:
             from io import BytesIO
             from PIL import Image
             img = Image.open(BytesIO(image_data))
             w, h = img.size
             max_side = max(w, h)
-            if max_side > 1600:
-                ratio = 1600 / max_side
+            if max_side > 1200:
+                ratio = 1200 / max_side
                 new_size = (int(w * ratio), int(h * ratio))
                 img = img.resize(new_size, Image.LANCZOS)
-                buf = BytesIO()
-                img_format = 'PNG' if mime_type == 'image/png' else 'JPEG'
-                img.save(buf, format=img_format, optimize=True)
-                image_data = buf.getvalue()
-                logger.info(f"Image resized: {w}x{h} -> {new_size[0]}x{new_size[1]}")
+            else:
+                new_size = (w, h)
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
+            buf = BytesIO()
+            img.save(buf, format='JPEG', quality=85, optimize=True)
+            image_data = buf.getvalue()
+            mime_type = 'image/jpeg'
+            logger.info(f"Image prepared for LLM: {w}x{h} -> {new_size[0]}x{new_size[1]} JPEG, {len(image_data)} bytes")
         except Exception as e:
-            logger.warning(f"Image resize skipped: {e}")
+            logger.warning(f"Image prep skipped: {e}")
 
         base64_image = base64.b64encode(image_data).decode("utf-8")
         response = self.client.chat.completions.create(
@@ -157,7 +161,7 @@ class QwenProvider(BaseLLMProvider):
                 }
             ],
             temperature=0.01,
-            max_tokens=2000,
+            max_tokens=1200,
         )
         return response.choices[0].message.content.strip()
 

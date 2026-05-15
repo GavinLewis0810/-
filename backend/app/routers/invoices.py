@@ -757,7 +757,7 @@ async def batch_delete_invoices(
             ip_address=client_info.get("ip_address"),
             user_agent=client_info.get("user_agent"),
         )
-        await db.delete(invoice)
+        await db.delete(invoice)  # cascade handles related records
         deleted_count += 1
 
     await db.commit()
@@ -900,7 +900,7 @@ async def delete_invoice(
         user_agent=client_info.get("user_agent"),
     )
 
-    await db.delete(invoice)
+    await db.delete(invoice)  # cascade deletes ai_call_logs, ocr/llm/diffs/forensics
     await db.commit()
 
     return {"message": "删除成功"}

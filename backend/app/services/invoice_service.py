@@ -159,6 +159,7 @@ async def process_invoice(invoice_id: int, db: AsyncSession) -> bool:
         await db.execute(delete(LlmResult).where(LlmResult.invoice_id == invoice_id))
         await db.execute(delete(OcrResult).where(OcrResult.invoice_id == invoice_id))
         await db.execute(delete(ImageForensicsResult).where(ImageForensicsResult.invoice_id == invoice_id))
+        await db.execute(delete(AICallLog).where(AICallLog.invoice_id == invoice_id))
         logger.info(f"Cleared existing processing results for invoice {invoice_id}")
 
         loop = asyncio.get_running_loop()

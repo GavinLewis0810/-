@@ -1,4 +1,5 @@
 from app.models.user import User
+from app.models.ai_call_log import AICallLog  # must be before Invoice for relationship resolution
 from app.models.invoice import Invoice, OcrResult, LlmResult, ParsingDiff
 from app.models.image_forensics import ImageForensicsResult
 from app.models.reimbursement import Reimbursement
