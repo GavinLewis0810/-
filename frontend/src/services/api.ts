@@ -317,6 +317,11 @@ export const getDashboardStats = async () => {
   return response.data;
 };
 
+export const getBudgetPrediction = async () => {
+  const response = await api.get('/reimbursements/dashboard/budget-prediction');
+  return response.data;
+};
+
 // ========== 管理员：用户管理 ==========
 
 export interface AdminUserItem {

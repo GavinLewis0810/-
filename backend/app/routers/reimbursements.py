@@ -1146,3 +1146,11 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
         "reimbursedInvoiceCount": reimbursed_invoice_count,
         "totalReimbursedAmount": float(total_reimbursed_amount),
     }
+
+
+@router.get("/dashboard/budget-prediction")
+async def get_budget_prediction(db: AsyncSession = Depends(get_db)):
+    """获取各项目预算耗尽预测（GM(1,1)+Markov 组合模型）"""
+    from app.services.budget_prediction_service import predict_budget_exhaustion
+    predictions = await predict_budget_exhaustion(db)
+    return {"predictions": predictions}

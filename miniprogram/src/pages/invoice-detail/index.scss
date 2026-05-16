@@ -1,0 +1,75 @@
+.page {
+  background: #0a0e27;
+  min-height: 100vh;
+  padding-bottom: 40px;
+}
+
+.loading {
+  text-align: center;
+  padding: 200px 0;
+  color: rgba(255,255,255,0.45);
+  font-size: 28px;
+}
+
+.preview-box {
+  margin: 24px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #111633;
+}
+.preview-img {
+  width: 100%;
+}
+.preview-hint {
+  text-align: center;
+  display: block;
+  padding: 12px;
+  font-size: 22px;
+  color: rgba(255,255,255,0.3);
+}
+
+.info-card {
+  background: #111633;
+  border-radius: 16px;
+  padding: 24px;
+  margin: 0 24px 16px;
+}
+.section-title {
+  font-size: 30px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 20px;
+  display: block;
+}
+
+.field-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.field-label {
+  font-size: 26px;
+  color: rgba(255,255,255,0.45);
+}
+.field-value {
+  font-size: 26px;
+  color: rgba(255,255,255,0.85);
+  text-align: right;
+  max-width: 55%;
+}
+
+.item-row {
+  padding: 16px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.item-name {
+  font-size: 26px;
+  color: #fff;
+  display: block;
+  margin-bottom: 6px;
+}
+.item-detail {
+  font-size: 24px;
+  color: rgba(255,255,255,0.4);
+}

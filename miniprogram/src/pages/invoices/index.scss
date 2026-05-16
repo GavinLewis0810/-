@@ -1,0 +1,129 @@
+.page {
+  background: #0a0e27;
+  min-height: 100vh;
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 28px 16px;
+  background: #0a0e27;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.top-title {
+  font-size: 40px;
+  font-weight: 700;
+  color: #fff;
+}
+.filter-btn {
+  font-size: 26px;
+  color: #1677ff;
+  padding: 8px 20px;
+  background: rgba(22,119,255,0.1);
+  border-radius: 16px;
+}
+
+.fab {
+  position: fixed;
+  right: 32px;
+  bottom: 120px;
+  width: 96px;
+  height: 96px;
+  background: linear-gradient(135deg, #1677ff, #0958d9);
+  border-radius: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 24px rgba(22,119,255,0.4);
+  z-index: 20;
+}
+.fab-icon {
+  font-size: 48px;
+  color: #fff;
+  line-height: 1;
+}
+
+.list {
+  height: calc(100vh - 90px);
+  padding: 0 24px 40px;
+}
+
+.invoice-card {
+  background: #111633;
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 16px;
+}
+.inv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.inv-name {
+  font-size: 28px;
+  color: #fff;
+  font-weight: 500;
+  flex: 1;
+  margin-right: 12px;
+}
+.inv-status {
+  font-size: 22px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.inv-status-upl { color: #faad14; background: rgba(250,173,20,0.1); }
+.inv-status-proc { color: #1677ff; background: rgba(22,119,255,0.1); }
+.inv-status-pend { color: #faad14; background: rgba(250,173,20,0.1); }
+.inv-status-conf { color: #52c41a; background: rgba(82,196,26,0.1); }
+.inv-status-reim { color: #13c2c2; background: rgba(19,194,194,0.1); }
+
+.inv-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.inv-number {
+  font-size: 24px;
+  color: rgba(255,255,255,0.45);
+}
+.inv-amount {
+  font-size: 32px;
+  font-weight: 700;
+  color: #52c41a;
+}
+
+.inv-footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+.inv-date {
+  font-size: 22px;
+  color: rgba(255,255,255,0.3);
+}
+.inv-carbon {
+  font-size: 22px;
+  color: rgba(82,196,26,0.6);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 120px 0;
+}
+.empty-icon { font-size: 64px; }
+.empty-text { font-size: 28px; color: rgba(255,255,255,0.45); margin-top: 16px; }
+.empty-hint { font-size: 24px; color: rgba(255,255,255,0.25); margin-top: 8px; }
+
+.load-more {
+  text-align: center;
+  padding: 24px;
+  font-size: 24px;
+  color: rgba(255,255,255,0.3);
+}

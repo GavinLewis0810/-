@@ -5,7 +5,7 @@ import {
   SafetyCertificateOutlined, RobotOutlined, ClockCircleOutlined,
 } from '@ant-design/icons';
 import { Line, Pie, Bar } from '@ant-design/plots';
-import { getDashboardStats } from '../services/api';
+import { getDashboardStats, getBudgetPrediction } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 export default function DashboardPage() {
@@ -18,6 +18,7 @@ export default function DashboardPage() {
   const [pieData, setPieData] = useState<any[]>([]);
   const [budgetData, setBudgetData] = useState<any[]>([]);
   const [pendingList, setPendingList] = useState<any[]>([]);
+  const [predictionData, setPredictionData] = useState<any[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchAll = async () => {
@@ -31,6 +32,10 @@ export default function DashboardPage() {
       setPieData(chartRes.pieData || []);
       setBudgetData(chartRes.budgetData || []);
       setPendingList(chartRes.pendingList || []);
+      try {
+        const predRes = await getBudgetPrediction();
+        setPredictionData(predRes.predictions || []);
+      } catch { /* prediction fetch is non-blocking */ }
     } catch { /* silent */ }
   };
 
@@ -199,6 +204,159 @@ export default function DashboardPage() {
           </Card>
         </Col>
       </Row>
+
+      {/* ====== 预算耗尽预测 ====== */}
+      {predictionData.length > 0 && (
+        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+          <Col span={14}>
+            <Card
+              title={<span style={{ color: '#fff' }}>🔮 预算耗尽预测（GM(1,1)+Markov 组合模型）</span>}
+              style={{ background: '#111633', border: 'none', borderRadius: 10 }}
+              headStyle={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}
+            >
+              <div style={{ height: 340 }}>
+                <Line
+                  {...({
+                    data: predictionData.flatMap((p: any) =>
+                      (p.cumulative_data || []).map((d: any) => ({
+                        date: d.date,
+                        amount: d.amount,
+                        project: (p.project_name || p.project_code || '未知').length > 8
+                          ? (p.project_name || p.project_code || '未知').slice(0, 8) + '...'
+                          : (p.project_name || p.project_code || '未知'),
+                        type: d.type,
+                        budget: p.budget,
+                      }))
+                    ),
+                    xField: 'date',
+                    yField: 'amount',
+                    seriesField: 'project',
+                    smooth: false,
+                    theme: 'dark' as const,
+                    color: ['#1677ff', '#52c41a', '#faad14', '#E42313', '#722ed1', '#13c2c2'],
+                    legend: { layout: 'horizontal' as const, position: 'top' as const },
+                    point: {
+                      size: 3,
+                      shape: 'circle',
+                    },
+                    tooltip: {
+                      title: (d: any) => `${d.date}`,
+                      formatter: (d: any) => ({
+                        name: `${d.project} (${d.type === 'predicted' ? '预测' : '实际'})`,
+                        value: `¥${Number(d.amount).toLocaleString()}`,
+                      }),
+                    },
+                    axis: {
+                      x: {
+                        label: { autoRotate: true, autoHide: true, style: { fill: 'rgba(255,255,255,0.65)', fontSize: 11 } },
+                        grid: { line: { style: { stroke: 'rgba(255,255,255,0.04)' } } },
+                      },
+                      y: {
+                        label: {
+                          style: { fill: 'rgba(255,255,255,0.45)', fontSize: 12 },
+                          formatter: (v: number) => {
+                            if (v >= 10000) return `${(v / 10000).toFixed(1)}万`;
+                            return `${v}`;
+                          },
+                        },
+                        grid: { line: { style: { stroke: 'rgba(255,255,255,0.06)' } } },
+                      },
+                    },
+                    annotations: predictionData
+                      .filter((p: any) => p.budget > 0)
+                      .map((p: any) => ({
+                        type: 'line' as const,
+                        yField: p.budget,
+                        style: { stroke: 'rgba(228,35,19,0.4)', lineDash: [6, 3], lineWidth: 1 },
+                        tooltip: false,
+                      })),
+                  } as any)}
+                />
+              </div>
+            </Card>
+          </Col>
+          <Col span={10}>
+            <Card
+              title={<span style={{ color: '#fff' }}>⚠️ 预算预警面板</span>}
+              style={{ background: '#111633', border: 'none', borderRadius: 10, height: '100%' }}
+              headStyle={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}
+              bodyStyle={{ padding: '0 12px 12px', maxHeight: 320, overflow: 'auto' }}
+            >
+              {predictionData.length === 0 ? (
+                <Empty description={<span style={{ color: '#999' }}>暂无预测数据</span>} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
+                predictionData.map((p: any, idx: number) => {
+                  const statusColors: Record<string, { bg: string; tag: string; icon: string }> = {
+                    critical: { bg: 'rgba(228,35,19,0.15)', tag: '#E42313', icon: '🔴' },
+                    warning: { bg: 'rgba(250,173,20,0.15)', tag: '#faad14', icon: '🟡' },
+                    normal: { bg: 'rgba(22,119,255,0.1)', tag: '#1677ff', icon: '🔵' },
+                    exhausted: { bg: 'rgba(228,35,19,0.25)', tag: '#E42313', icon: '💀' },
+                    insufficient_data: { bg: 'rgba(255,255,255,0.03)', tag: 'rgba(255,255,255,0.25)', icon: '⬜' },
+                  };
+                  const s = statusColors[p.status] || statusColors.normal;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        background: s.bg,
+                        borderRadius: 8,
+                        padding: '12px 14px',
+                        marginTop: 10,
+                        borderLeft: `3px solid ${s.tag}`,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <span style={{ color: '#fff', fontWeight: 600, fontSize: 14 }}>
+                          {s.icon} {p.project_name || p.project_code}
+                        </span>
+                        <Tag
+                          color={
+                            p.status === 'critical' || p.status === 'exhausted' ? 'error'
+                            : p.status === 'warning' ? 'warning'
+                            : p.status === 'insufficient_data' ? 'default'
+                            : 'processing'
+                          }
+                          style={{ fontSize: 11 }}
+                        >
+                          {p.status === 'critical' ? '紧急'
+                            : p.status === 'warning' ? '预警'
+                            : p.status === 'exhausted' ? '已耗尽'
+                            : p.status === 'insufficient_data' ? '数据不足'
+                            : '正常'}
+                        </Tag>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', lineHeight: 1.8 }}>
+                        <div>预算: ¥{Number(p.budget).toLocaleString()} | 已用: ¥{Number(p.spent).toLocaleString()}</div>
+                        {p.status !== 'insufficient_data' && p.status !== 'exhausted' && (
+                          <>
+                            <div>月均消耗: ¥{Number(p.monthly_burn_rate || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</div>
+                            <div style={{ color: p.days_remaining <= 30 ? '#E42313' : p.days_remaining <= 90 ? '#faad14' : 'rgba(255,255,255,0.6)' }}>
+                              {typeof p.days_remaining === 'number' && p.days_remaining < 9999
+                                ? `预计 ${p.days_remaining} 天后耗尽 · ${p.predicted_exhaustion_date}`
+                                : '短期内不会耗尽'}
+                            </div>
+                          </>
+                        )}
+                        {p.status === 'exhausted' && (
+                          <div style={{ color: '#E42313' }}>预算已耗尽！请立即调整支出策略</div>
+                        )}
+                        {p.status === 'insufficient_data' && (
+                          <div>数据不足，需要至少3条报销记录才能预测</div>
+                        )}
+                        {p.gm11_quality != null && p.status !== 'insufficient_data' && (
+                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
+                            GM(1,1) 拟合误差: {p.gm11_quality}%
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       {/* ====== 底排：风险饼图 + 待审批列表 ====== */}
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
