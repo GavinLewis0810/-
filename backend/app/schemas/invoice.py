@@ -11,6 +11,7 @@ class InvoiceStatus(str, Enum):
     PENDING = "待处理"
     REVIEWING = "待确认"
     CONFIRMED = "已确认"
+    PENDING_RECHECK = "待重审"
     REIMBURSED = "已报销"
     NOT_REIMBURSED = "未报销"
 
@@ -46,6 +47,10 @@ class InvoiceBase(BaseModel):
     # ESG 碳足迹
     spend_category: Optional[str] = Field(None, description="消费类别")
     carbon_kg: Optional[float] = Field(None, description="碳足迹(kg CO2)")
+
+    # 发票确认流程：字段级状态
+    field_states: Optional[Dict[str, Any]] = Field(None, description="字段确认状态快照")
+    user_corrections: Optional[Dict[str, Any]] = Field(None, description="用户修正记录")
 
 
 class InvoiceCreate(InvoiceBase):
@@ -194,6 +199,18 @@ class UploadResponse(BaseModel):
     id: int
     file_name: str
     status: str
+    message: str
+
+
+class ConfirmInvoiceRequest(BaseModel):
+    """用户确认发票数据"""
+    corrections: Dict[str, str] = Field(default_factory=dict, description="用户修正的字段 map: {field_name: user_value}")
+
+class ConfirmInvoiceResponse(BaseModel):
+    invoice_id: int
+    status: str
+    has_corrections: bool = False
+    corrected_fields: List[str] = []
     message: str
 
 

@@ -143,9 +143,79 @@ page {
         &.tag-conf { color: #07c160; background: rgba(7, 193, 96, 0.1); }
         &.tag-reim { color: #07c160; background: rgba(7, 193, 96, 0.2); }
         &.tag-pend { color: #ff9900; background: rgba(255, 153, 0, 0.1); }
+        &.tag-warn { color: #cf1322; background: rgba(207, 19, 34, 0.1); }
+      }
+
+      /* 字段状态徽标 */
+      .field-badge {
+        margin-left: 6px;
+        font-size: 11px;
+
+        &.badge-locked { color: #52c41a; }
+        &.badge-editable { color: #faad14; }
+        &.badge-conflict { color: #ff4d4f; }
+      }
+
+      /* 可编辑输入框 */
+      .field-input {
+        flex: 1;
+        text-align: right;
+        font-size: 14px;
+        padding: 4px 8px;
+        border: 1px solid #d9d9d9;
+        border-radius: 4px;
+        background: #fff;
+
+        &.font-mono { font-family: monospace; }
+      }
+
+      /* 锁定行底色 */
+      &.badge-locked {
+        .field-value { color: #8c8c8c; }
+      }
+      &.badge-conflict {
+        background: rgba(255, 77, 79, 0.04);
       }
     }
   }
+
+  /* 确认流程 UI */
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-outline {
+    font-size: 12px !important;
+    color: #2f54eb !important;
+    border-color: #2f54eb !important;
+  }
+
+  .btn-primary {
+    font-size: 14px !important;
+    background: #2f54eb !important;
+    color: #fff !important;
+    border-radius: 8px !important;
+  }
+
+  .edit-notice {
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    border-radius: 8px;
+    background: #f0f5ff;
+    border: 1px solid #d6e4ff;
+    font-size: 12px;
+    color: #1d39c4;
+    line-height: 1.6;
+  }
+
+  .confirm-bar {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #f2f3f5;
+  }
+}
 
   /* --- 📦 消费商品明细阶梯排列 --- */
   .items-list-wrapper {

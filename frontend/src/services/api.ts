@@ -212,11 +212,12 @@ export const resolveDiff = async (
   return response.data;
 };
 
-// Confirm invoice
+// Confirm invoice — 传入用户修正的字段
 export const confirmInvoice = async (
-  invoiceId: number
-): Promise<{ message: string; resolved_count: number }> => {
-  const response = await api.post(`/invoices/${invoiceId}/confirm`);
+  invoiceId: number,
+  corrections: Record<string, string> = {},
+): Promise<{ invoice_id: number; status: string; has_corrections: boolean; corrected_fields: string[]; message: string }> => {
+  const response = await api.post(`/invoices/${invoiceId}/confirm`, { corrections });
   return response.data;
 };
 

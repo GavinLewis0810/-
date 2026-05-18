@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import type { CSSProperties } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Descriptions,
@@ -10,7 +9,6 @@ import {
   Col,
   Form,
   Input,
-  Select,
   Modal,
   Table,
   Card,
@@ -19,7 +17,6 @@ import {
 import {
   ArrowLeftOutlined,
   EditOutlined,
-  SaveOutlined,
   SyncOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -34,9 +31,8 @@ import {
   FileImageOutlined,
   SoundOutlined,
 } from '@ant-design/icons';
-import { getInvoice, getInvoiceFileUrl, updateInvoice, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice, saveGroundTruth } from '../services/api';
+import { getInvoice, getInvoiceFileUrl, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice, saveGroundTruth } from '../services/api';
 import type { InvoiceDetail } from '../types/invoice';
-import { InvoiceStatus } from '../types/invoice';
 import StatusTag from '../components/StatusTag';
 import styles from './InvoiceDetailPage.module.css';
 
@@ -52,24 +48,6 @@ const fieldLabels: Record<string, string> = {
   tax_rate: '税率',
   tax_amount: '总税额',
 };
-
-const CONFIDENCE_THRESHOLD = 0.8;
-
-function buildConfidenceMap(diffs: { field_name: string; confidence: number | null }[]): Record<string, number | null> {
-  const map: Record<string, number | null> = {};
-  for (const d of diffs) {
-    map[d.field_name] = d.confidence;
-  }
-  return map;
-}
-
-function getConfidenceStyle(confidence: number | null | undefined): CSSProperties {
-  if (confidence == null) return {};
-  if (confidence < CONFIDENCE_THRESHOLD) {
-    return { background: '#fffbe6', borderColor: '#faad14' };
-  }
-  return { background: '#f6ffed', borderColor: '#52c41a' };
-}
 
 // 💡 商品明细表格的列定义
 const itemColumns = [
@@ -223,20 +201,6 @@ function InvoiceDetailPage() {
     fetchInvoice();
   }, [id]);
 
-  const handleSave = async () => {
-    if (!id || !invoice) return;
-
-    try {
-      const values = await form.validateFields();
-      await updateInvoice(parseInt(id), values);
-      message.success('保存成功');
-      setEditMode(false);
-      fetchInvoice();
-    } catch (error) {
-      message.error('保存失败');
-    }
-  };
-
   const handleResolveDiff = async (diffId: number, source: 'ocr' | 'llm' | 'custom', customVal?: string) => {
     if (!id) return;
     setResolvingDiff(diffId);
@@ -255,37 +219,31 @@ function InvoiceDetailPage() {
   };
 
   const handleConfirmAll = async () => {
-    if (!id) return;
+    if (!id || !invoice) return;
 
-    if (invoice) {
-      // 移除了对单行 item_name 的必填校验，因为现在是数组了
-      const requiredFields: Array<keyof InvoiceDetail> = [
-        'invoice_number',
-        'issue_date',
-        'total_with_tax',
-        'buyer_name',
-        'seller_name',
-      ];
-      const missing = requiredFields.filter((field) => {
-        const value = invoice[field];
-        if (value === null || value === undefined) {
-          return true;
-        }
-        if (typeof value === 'string') {
-          return value.trim().length === 0;
-        }
-        return false;
-      });
+    // 计算哪些字段被用户修改过（对比当前 form 值和 invoice 原始值）
+    const corrections: Record<string, string> = {};
+    const states = invoice.field_states || {};
+    const formValues = form.getFieldsValue();
 
-      if (missing.length > 0) {
-        message.error('请先补全基础必填字段，再进行确认。');
-        return;
+    for (const field of Object.keys(fieldLabels)) {
+      const state = states[field];
+      if (!state || state.status === 'locked') continue; // 锁定字段不可改
+
+      const original = String(state.ocr ?? state.llm ?? '');
+      const current = String(formValues[field] ?? '');
+      if (current !== original && current.trim() !== '') {
+        corrections[field] = current;
       }
     }
 
     try {
-      await confirmInvoice(parseInt(id));
-      message.success(invoice?.llm_result ? '发票已确认' : '发票已确认（OCR-only）');
+      const res = await confirmInvoice(parseInt(id), corrections);
+      if (res.has_corrections) {
+        message.warning(res.message);
+      } else {
+        message.success(res.message);
+      }
       fetchInvoice();
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'response' in error) {
@@ -340,9 +298,6 @@ function InvoiceDetailPage() {
   const matchCount = invoice.parsing_diffs?.filter(d => d.resolved).length || 0;
   const totalCount = invoice.parsing_diffs?.length || 0;
 
-  // HITL: 构建字段置信度映射，用于高亮低置信度字段
-  const confidenceMap = buildConfidenceMap(invoice.parsing_diffs || []);
-
   return (
     <div className={styles.pageContainer}>
       <div className={styles.pageHeader}>
@@ -367,13 +322,16 @@ function InvoiceDetailPage() {
           <button
             className={styles.confirmButton}
             onClick={handleConfirmAll}
-            disabled={invoice.status === '已确认' || (hasLlm && hasUnresolvedDiffs)}
+            disabled={invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审'}
             style={{
-              opacity: (invoice.status === '已确认' || (hasLlm && hasUnresolvedDiffs)) ? 0.5 : 1,
-              cursor: (invoice.status === '已确认' || (hasLlm && hasUnresolvedDiffs)) ? 'not-allowed' : 'pointer'
+              opacity: (invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审') ? 0.5 : 1,
+              cursor: (invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审') ? 'not-allowed' : 'pointer'
             }}
           >
-            {invoice.status === '已确认' ? '已确认' : '确认发票'}
+            {invoice.status === '已确认' ? '已确认'
+              : invoice.status === '待重审' ? '待管理员复核'
+              : invoice.status === '已报销' ? '已报销'
+              : '提交确认'}
           </button>
           <button
             className={styles.confirmButton}
@@ -397,80 +355,59 @@ function InvoiceDetailPage() {
               </div>
               <div className={styles.cardActions}>
                 {editMode ? (
-                  <>
-                    <Button onClick={() => setEditMode(false)}>取消</Button>
-                    <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>
-                      保存
-                    </Button>
-                  </>
-                ) : (
-                  <Button icon={<EditOutlined />} onClick={() => setEditMode(true)}>
-                    编辑
+                  <Button onClick={() => setEditMode(false)}>取消核对</Button>
+                ) : invoice.status !== '已确认' && invoice.status !== '已报销' ? (
+                  <Button type="primary" icon={<EditOutlined />} onClick={() => setEditMode(true)}>
+                    核对确认
                   </Button>
-                )}
+                ) : null}
               </div>
             </div>
             <div className={styles.cardBody}>
               {editMode ? (
                 <Form form={form} layout="vertical">
-                  {/* --- 1. 发票主表字段（头部信息） --- */}
+                  <div style={{ marginBottom: 16, padding: '8px 14px', borderRadius: 8, background: '#f0f5ff', border: '1px solid #d6e4ff', fontSize: 13, color: '#1d39c4' }}>
+                    请对照左侧原始发票图像逐字段核实，<b>锁定字段不可修改</b>，可编辑字段修改后将被标记为<b>"用户修正"</b>并转管理员复核。
+                  </div>
+                  {/* --- 发票主表字段 --- */}
                   <Row gutter={16}>
-                    <Col span={8}>
-                      <Form.Item name="invoice_number" label={
-                        <span>发票号码 {confidenceMap.invoice_number != null && confidenceMap.invoice_number < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.invoice_number! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input style={getConfidenceStyle(confidenceMap.invoice_number)} /></Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="issue_date" label={
-                        <span>开票日期 {confidenceMap.issue_date != null && confidenceMap.issue_date < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.issue_date! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input style={getConfidenceStyle(confidenceMap.issue_date)} /></Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="total_with_tax" label={
-                        <span>价税合计(总额) {confidenceMap.total_with_tax != null && confidenceMap.total_with_tax < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.total_with_tax! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input type="number" style={getConfidenceStyle(confidenceMap.total_with_tax)} /></Form.Item>
-                    </Col>
+                    {Object.keys(fieldLabels).map((field) => {
+                      const state = invoice.field_states?.[field];
+                      const isLocked = state?.status === 'locked';
+                      const isConflict = state?.status === 'conflict';
+                      const confidence = state?.confidence != null ? `${(state.confidence * 100).toFixed(0)}%` : null;
 
-                    <Col span={12}>
-                      <Form.Item name="buyer_name" label={
-                        <span>购买方名称 {confidenceMap.buyer_name != null && confidenceMap.buyer_name < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.buyer_name! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input style={getConfidenceStyle(confidenceMap.buyer_name)} /></Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="buyer_tax_id" label={
-                        <span>购买方纳税人识别号 {confidenceMap.buyer_tax_id != null && confidenceMap.buyer_tax_id < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.buyer_tax_id! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input style={getConfidenceStyle(confidenceMap.buyer_tax_id)} /></Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="seller_name" label={
-                        <span>销售方名称 {confidenceMap.seller_name != null && confidenceMap.seller_name < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.seller_name! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input style={getConfidenceStyle(confidenceMap.seller_name)} /></Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item name="seller_tax_id" label={
-                        <span>销售方纳税人识别号 {confidenceMap.seller_tax_id != null && confidenceMap.seller_tax_id < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.seller_tax_id! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input style={getConfidenceStyle(confidenceMap.seller_tax_id)} /></Form.Item>
-                    </Col>
+                      let badge: React.ReactNode = null;
+                      let fieldBg: React.CSSProperties = {};
+                      if (isLocked) {
+                        badge = <Tooltip title={`双引擎一致 · 置信度 ${confidence}`}><CheckCircleOutlined style={{ color: '#52c41a', marginLeft: 4 }} /></Tooltip>;
+                        fieldBg = { background: '#f6ffed', borderColor: '#b7eb8f' };
+                      } else if (isConflict) {
+                        badge = <Tooltip title={`OCR: ${state?.ocr ?? '-'} | LLM: ${state?.llm ?? '-'}`}><WarningOutlined style={{ color: '#ff4d4f', marginLeft: 4 }} /></Tooltip>;
+                        fieldBg = { background: '#fff2f0', borderColor: '#ffccc7' };
+                      } else {
+                        badge = <Tooltip title={`可修正 · 置信度 ${confidence}`}><EditOutlined style={{ color: '#faad14', marginLeft: 4 }} /></Tooltip>;
+                      }
 
-                    <Col span={8}>
-                      <Form.Item name="amount" label={
-                        <span>金额(不含税) {confidenceMap.amount != null && confidenceMap.amount < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.amount! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input type="number" style={getConfidenceStyle(confidenceMap.amount)} /></Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="tax_amount" label={
-                        <span>总税额 {confidenceMap.tax_amount != null && confidenceMap.tax_amount < CONFIDENCE_THRESHOLD && <Tooltip title={`LLM置信度 ${(confidenceMap.tax_amount! * 100).toFixed(0)}%，建议核对原图`}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>}</span>
-                      }><Input type="number" style={getConfidenceStyle(confidenceMap.tax_amount)} /></Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="status" label="状态">
-                        <Select options={Object.values(InvoiceStatus).map((s) => ({ label: s, value: s }))} />
-                      </Form.Item>
-                    </Col>
+                      return (
+                        <Col span={8} key={field}>
+                          <Form.Item
+                            name={field}
+                            label={<span>{fieldLabels[field]} {badge}</span>}
+                          >
+                            <Input
+                              disabled={isLocked || isConflict}
+                              style={fieldBg}
+                              placeholder={isConflict ? `OCR:${state?.ocr} | LLM:${state?.llm}` : undefined}
+                            />
+                          </Form.Item>
+                        </Col>
+                      );
+                    })}
                   </Row>
 
-                  {/* --- 2. 动态表单列表 (发票商品明细 items) --- */}
-                  <div style={{ marginTop: 24, marginBottom: 16, fontWeight: 'bold' }}>商品明细编辑</div>
+                  {/* --- 商品明细 --- */}
+                  <div style={{ marginTop: 24, marginBottom: 16, fontWeight: 'bold' }}>商品明细</div>
                   <Form.List name="items">
                     {(fields, { add, remove }) => (
                       <>
@@ -479,53 +416,15 @@ function InvoiceDetailPage() {
                             <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f' }} />
                           }>
                             <Row gutter={16}>
-                              <Col span={8}>
-                                <Form.Item {...restField} name={[name, 'item_name']} label="项目名称">
-                                  <Input placeholder="输入项目名称" />
-                                </Form.Item>
-                              </Col>
-                              <Col span={6}>
-                                <Form.Item {...restField} name={[name, 'specification']} label="规格型号">
-                                  <Input placeholder="规格型号" />
-                                </Form.Item>
-                              </Col>
-                              <Col span={5}>
-                                <Form.Item {...restField} name={[name, 'amount']} label="金额(不含税)">
-                                  <Input placeholder="金额" />
-                                </Form.Item>
-                              </Col>
-                              <Col span={5}>
-                                <Form.Item {...restField} name={[name, 'tax_amount']} label="税额">
-                                  <Input placeholder="税额" />
-                                </Form.Item>
-                              </Col>
-                              <Col span={6}>
-                                <Form.Item {...restField} name={[name, 'quantity']} label="数量">
-                                  <Input placeholder="数量" />
-                                </Form.Item>
-                              </Col>
-                              <Col span={6}>
-                                <Form.Item {...restField} name={[name, 'unit_price']} label="单价">
-                                  <Input placeholder="单价" />
-                                </Form.Item>
-                              </Col>
-                              <Col span={6}>
-                                <Form.Item {...restField} name={[name, 'unit']} label="单位">
-                                  <Input placeholder="单位" />
-                                </Form.Item>
-                              </Col>
-                              <Col span={6}>
-                                <Form.Item {...restField} name={[name, 'tax_rate']} label="税率">
-                                  <Input placeholder="税率" />
-                                </Form.Item>
-                              </Col>
+                              <Col span={8}><Form.Item {...restField} name={[name, 'item_name']} label="项目名称"><Input /></Form.Item></Col>
+                              <Col span={6}><Form.Item {...restField} name={[name, 'specification']} label="规格型号"><Input /></Form.Item></Col>
+                              <Col span={5}><Form.Item {...restField} name={[name, 'amount']} label="金额"><Input /></Form.Item></Col>
+                              <Col span={5}><Form.Item {...restField} name={[name, 'tax_amount']} label="税额"><Input /></Form.Item></Col>
                             </Row>
                           </Card>
                         ))}
                         <Form.Item>
-                          <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
-                            添加一行商品明细
-                          </Button>
+                          <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>添加一行明细</Button>
                         </Form.Item>
                       </>
                     )}
@@ -681,7 +580,7 @@ function InvoiceDetailPage() {
                   <tbody>
                     {invoice.parsing_diffs?.map((diff) => {
                       const isMatch = diff.ocr_value === diff.llm_value;
-                      const isLowConf = diff.confidence != null && diff.confidence < CONFIDENCE_THRESHOLD;
+                      const isLowConf = diff.confidence != null && diff.confidence < 0.8;
                       return (
                         <tr
                           key={diff.id}
@@ -729,7 +628,7 @@ function InvoiceDetailPage() {
                                 }
                               >
                                 <span style={{
-                                  color: diff.confidence < CONFIDENCE_THRESHOLD ? '#d48806' : '#389e0d',
+                                  color: diff.confidence < 0.8 ? '#d48806' : '#389e0d',
                                   fontWeight: 'bold',
                                   fontSize: 14,
                                   cursor: 'help',

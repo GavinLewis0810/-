@@ -38,6 +38,7 @@ COMPARABLE_FIELDS = [
     'seller_tax_id',
     'total_with_tax',
     'amount',
+    'tax_rate',
     'tax_amount'
 ]
 

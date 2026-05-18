@@ -18,8 +18,9 @@ class InvoiceStatus(str, Enum):
     UPLOADED = "已上传"
     PROCESSING = "解析中"
     PENDING = "待处理"       # legacy
-    REVIEWING = "待确认"     # 需要人工比对 OCR/LLM 差异后确认
-    CONFIRMED = "已确认"     # 员工已确认/已提交报销待审批
+    REVIEWING = "待确认"     # 双引擎提取完成，等待用户确认
+    CONFIRMED = "已确认"     # 用户已确认，字段未被修改，自动进入报销池
+    PENDING_RECHECK = "待重审"  # 用户修改了字段，管理员需核对原始图像
     REIMBURSED = "已报销"    # 报销单审批通过
     NOT_REIMBURSED = "未报销"
 
@@ -64,6 +65,10 @@ class Invoice(Base):
 
     # 人工标注真值（用于双引擎精度评估）
     ground_truth = Column(JSONB, nullable=True, comment="人工标注字段真值，格式同ParsingDiff字段名")
+
+    # 发票确认流程：字段级状态快照
+    field_states = Column(JSONB, nullable=True, comment="字段确认快照 {field: {status,ocr,llm,confidence}}")
+    user_corrections = Column(JSONB, nullable=True, comment="用户修正记录 {field: user_entered_value}")
 
     # 归属人：外键关联到 users 表
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)

@@ -165,6 +165,9 @@ async def startup():
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS carbon_kg NUMERIC(10,4)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS green_points INTEGER DEFAULT 0",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS ground_truth JSONB",
+            # 发票确认流程：字段级状态快照与用户修正记录
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS field_states JSONB",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS user_corrections JSONB",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS carbon_kg NUMERIC(10,4)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS submitter_id INTEGER REFERENCES users(id)",

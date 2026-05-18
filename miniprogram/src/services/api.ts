@@ -101,6 +101,12 @@ export const getInvoice = async (id: number): Promise<Invoice> => {
   return request(`/invoices/${id}`);
 };
 
+export const confirmInvoice = async (invoiceId: number, corrections: Record<string, string> = {}): Promise<{
+  invoice_id: number; status: string; has_corrections: boolean; corrected_fields: string[]; message: string;
+}> => {
+  return request(`/invoices/${invoiceId}/confirm`, { method: 'POST', data: { corrections } });
+};
+
 export const updateInvoice = async (id: number, data: Partial<Invoice>): Promise<Invoice> => {
   return request(`/invoices/${id}`, { method: 'PUT', data });
 };

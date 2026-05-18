@@ -15,7 +15,8 @@ from app.models.image_forensics import ImageForensicsResult
 from app.schemas.invoice import (
     InvoiceResponse, InvoiceListResponse, InvoiceDetailResponse,
     InvoiceUpdate, BatchUpdateRequest, BatchDeleteRequest, StatisticsResponse, UploadResponse,
-    ResolveDiffRequest, GroundTruthSave
+    ResolveDiffRequest, GroundTruthSave,
+    ConfirmInvoiceRequest, ConfirmInvoiceResponse,
 )
 from app.config import get_settings
 from app.services.audit_service import log_audit_no_commit, get_client_info
@@ -473,6 +474,122 @@ async def update_invoice(
     await db.refresh(invoice)
 
     return InvoiceResponse.model_validate(invoice)
+
+
+FIELD_LABELS = {
+    "invoice_number": "发票号码", "issue_date": "开票日期", "buyer_name": "购买方",
+    "buyer_tax_id": "购买方税号", "seller_name": "销售方", "seller_tax_id": "销售方税号",
+    "total_with_tax": "价税合计", "amount": "不含税金额", "tax_rate": "税率", "tax_amount": "税额",
+}
+
+HIGH_CONFIDENCE = 0.95
+LOW_CONFIDENCE = 0.70
+
+
+def _build_field_states(diffs: list) -> dict:
+    """从 ParsingDiff 列表构建字段级状态快照。"""
+    states = {}
+    diff_map = {d.field_name: d for d in diffs}
+
+    for field, label in FIELD_LABELS.items():
+        diff = diff_map.get(field)
+        if not diff:
+            continue
+
+        ocr_val = diff.ocr_value
+        llm_val = diff.llm_value
+        conf = float(diff.confidence or 0)
+        eng_match = (ocr_val == llm_val) if (ocr_val is not None and llm_val is not None) else None
+
+        if conf >= HIGH_CONFIDENCE and eng_match is True:
+            status = "locked"
+        elif conf >= LOW_CONFIDENCE:
+            status = "correctable"
+        elif eng_match is False:
+            status = "conflict"
+        else:
+            status = "correctable"
+
+        states[field] = {
+            "status": status,
+            "label": label,
+            "ocr": ocr_val,
+            "llm": llm_val,
+            "confidence": round(conf, 2),
+        }
+
+    return states
+
+
+@router.post("/{invoice_id}/confirm", response_model=ConfirmInvoiceResponse)
+async def confirm_invoice(
+        invoice_id: int,
+        body: ConfirmInvoiceRequest,
+        request: Request,
+        db: AsyncSession = Depends(get_db)
+):
+    """用户确认发票数据。修正过的字段会导致发票进入『待重审』状态。"""
+    query = select(Invoice).where(Invoice.id == invoice_id)
+    result = await db.execute(query)
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="发票不存在")
+
+    if invoice.status not in [InvoiceStatus.REVIEWING, InvoiceStatus.PENDING]:
+        raise HTTPException(status_code=400, detail="当前发票状态不允许确认操作")
+
+    # 加载解析差异数据（用局部变量，避免给 ORM relationship 赋值触发懒加载炸 greenlet）
+    diff_query = select(ParsingDiff).where(ParsingDiff.invoice_id == invoice_id)
+    diff_result = await db.execute(diff_query)
+    diffs = diff_result.scalars().all()
+
+    # 1. 构建字段状态快照
+    field_states = _build_field_states(diffs)
+    invoice.field_states = field_states
+
+    # 2. 对比用户修正
+    corrections = body.corrections or {}
+    corrected_fields: list[str] = []
+    for field, user_val in corrections.items():
+        if field not in field_states:
+            continue
+        cur = getattr(invoice, field, None)
+        cur_str = str(cur) if cur is not None else None
+        if user_val != cur_str:
+            corrected_fields.append(field)
+
+    if corrected_fields:
+        invoice.user_corrections = {f: corrections[f] for f in corrected_fields}
+        for field in corrected_fields:
+            setattr(invoice, field, corrections[field])
+        invoice.status = InvoiceStatus.PENDING_RECHECK
+        message = f"已标记 {len(corrected_fields)} 个用户修正字段，待管理员核对"
+    else:
+        invoice.user_corrections = None
+        invoice.status = InvoiceStatus.CONFIRMED
+        message = "发票已确认，字段未被修改"
+
+    # 3. 审计日志
+    client_info = get_client_info(request)
+    await log_audit_no_commit(
+        db=db, entity_type="invoice", entity_id=invoice_id,
+        action="confirm",
+        old_value={"status": invoice.status.value, "corrections": corrections},
+        new_value={"status": invoice.status.value, "corrected_fields": corrected_fields},
+        ip_address=client_info.get("ip_address"),
+        user_agent=client_info.get("user_agent"),
+    )
+
+    await db.commit()
+    await db.refresh(invoice)
+
+    return ConfirmInvoiceResponse(
+        invoice_id=invoice.id,
+        status=invoice.status.value,
+        has_corrections=len(corrected_fields) > 0,
+        corrected_fields=corrected_fields,
+        message=message,
+    )
 
 
 @router.post("/{invoice_id}/ground-truth")

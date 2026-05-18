@@ -281,11 +281,15 @@ function InvoiceListPage() {
 
   const handleDelete = async (id: number) => {
     try {
+      // 乐观删除：先从列表移除，避免 loading 闪烁抽搐
+      setInvoices(prev => prev.filter(inv => inv.id !== id));
+      setTotal(prev => prev - 1);
       await deleteInvoice(id);
       message.success('删除成功');
-      fetchInvoices();
+      fetchInvoices(true); // 静默同步，不触发 loading
     } catch (error) {
       message.error('删除失败');
+      fetchInvoices(true); // 回滚
     }
   };
 
@@ -318,13 +322,17 @@ function InvoiceListPage() {
       okType: 'danger',
       cancelText: '取消',
       onOk: async () => {
+        const ids = [...selectedRowKeys];
         try {
-          const result = await batchDeleteInvoices(selectedRowKeys);
-          message.success(result.message);
+          setInvoices(prev => prev.filter(inv => !ids.includes(inv.id)));
+          setTotal(prev => prev - ids.length);
           setSelectedRowKeys([]);
-          fetchInvoices();
+          const result = await batchDeleteInvoices(ids);
+          message.success(result.message);
+          fetchInvoices(true);
         } catch (error) {
           message.error('批量删除失败');
+          fetchInvoices(true);
         }
       },
     });
