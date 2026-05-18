@@ -138,3 +138,62 @@ export interface NotificationItem {
   entity_id: number | null;
   created_at: string;
 }
+
+export interface ApplicationItem {
+  id: number;
+  title: string;
+  description: string | null;
+  estimated_amount: number;
+  used_amount: number;
+  project_code: string | null;
+  project_name: string | null;
+  status: string;
+  reject_reason: string | null;
+  user_name: string | null;
+  reason_category_id: number | null;
+  created_at: string;
+}
+
+export interface BorrowingItem {
+  id: number;
+  title: string;
+  estimated_amount: number;
+  expected_repayment_date: string | null;
+  status: string;
+  reject_reason: string | null;
+  repaid_amount: number | null;
+  reimbursement_id: number | null;
+  application_id: number | null;
+  application_title: string | null;
+  user_name: string | null;
+  approver_name: string | null;
+  created_at: string | null;
+}
+
+export interface BankCardItem {
+  id: number;
+  bank_name: string;
+  account_name: string;
+  card_number: string;
+  is_default: boolean;
+  balance: number;
+}
+
+export interface TransactionItem {
+  id: number;
+  type: string;
+  amount: number;
+  borrowing_id: number | null;
+  reimbursement_id: number | null;
+  balance_before: number;
+  balance_after: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface ReasonCategory {
+  id: number;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+}

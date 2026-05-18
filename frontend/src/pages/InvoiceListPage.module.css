@@ -4,28 +4,32 @@
   gap: var(--spacing-2xl);
 }
 
-/* Page Header */
+/* ── Page Header ── */
 .pageHeader {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding-bottom: var(--spacing-xl);
-  border-bottom: 1px solid var(--border);
+  padding: var(--spacing-2xl) var(--spacing-2xl);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
 }
 
 .headerContent {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-xs);
 }
 
 .pageTitle {
   font-family: var(--font-primary);
-  font-size: 32px;
-  font-weight: var(--font-weight-semibold);
+  font-size: 28px;
+  font-weight: var(--font-weight-bold);
   color: var(--foreground);
   margin: 0;
   line-height: var(--line-height-tight);
+  letter-spacing: -0.02em;
 }
 
 .pageSubtitle {
@@ -46,44 +50,74 @@
   background-color: var(--background);
   border: 1px solid var(--border);
   color: var(--foreground);
+  border-radius: var(--radius-base);
+  font-weight: var(--font-weight-medium);
 }
 
 .secondaryButton:hover {
   background-color: var(--surface);
-  border-color: var(--gray-400);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .primaryButton {
-  background-color: var(--black-primary);
-  color: var(--background);
+  background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+  color: #FFFFFF;
   border: none;
+  border-radius: var(--radius-base);
+  font-weight: var(--font-weight-medium);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .primaryButton:hover {
-  background-color: #1a1a1a;
+  background: linear-gradient(135deg, var(--primary-hover), var(--primary-hover));
+  box-shadow: 0 4px 14px var(--primary-glow);
 }
 
-/* Metrics Section */
+/* ── Metrics Section ── */
 .metricsSection {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: var(--spacing-xl);
 }
 
-/* Additional Controls */
+/* ── Additional Controls ── */
 .additionalControls {
   display: flex;
   gap: var(--spacing-md);
   flex-wrap: wrap;
   align-items: center;
-  padding: var(--spacing-base) 0;
+  padding: var(--spacing-lg) var(--spacing-xl);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
 }
 
-/* Table Container */
+.controlDivider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 var(--spacing-xs);
+}
+
+.selectedBadge {
+  font-family: var(--font-secondary);
+  font-size: var(--font-size-sm);
+  color: var(--primary);
+  font-weight: var(--font-weight-medium);
+  background: var(--primary-light);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  line-height: 24px;
+}
+
+/* ── Table Container ── */
 .tableContainer {
   border: 1px solid var(--border);
-  border-radius: var(--radius-base);
+  border-radius: var(--radius-xl);
   overflow: hidden;
+  background: var(--background);
+  box-shadow: var(--shadow-sm);
 }
 
 .invoiceTable :global(.ant-table-thead > tr > th) {
@@ -92,7 +126,8 @@
   font-family: var(--font-secondary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  color: var(--foreground);
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
 }
 
 .invoiceTable :global(.ant-table-tbody > tr > td) {
@@ -108,17 +143,18 @@
 }
 
 .invoiceTable :global(.ant-table-tbody > tr:hover > td) {
-  background-color: var(--surface);
+  background-color: rgba(79, 70, 229, 0.03);
 }
 
-/* Pagination Row */
+/* ── Pagination Row ── */
 .paginationRow {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-base) var(--spacing-xl);
   border: 1px solid var(--border);
-  border-radius: var(--radius-base);
+  border-radius: var(--radius-xl);
+  background: var(--background);
   height: 56px;
 }
 
@@ -143,10 +179,11 @@
   font-family: var(--font-secondary);
   font-size: var(--font-size-sm);
   color: var(--foreground);
+  font-weight: var(--font-weight-medium);
   padding: 0 var(--spacing-md);
 }
 
-/* Responsive Design */
+/* ── Responsive Design ── */
 @media (max-width: 1200px) {
   .metricsSection {
     grid-template-columns: repeat(2, 1fr);
@@ -161,6 +198,10 @@
 
   .metricsSection {
     grid-template-columns: 1fr;
+  }
+
+  .additionalControls {
+    flex-direction: column;
   }
 
   .paginationRow {

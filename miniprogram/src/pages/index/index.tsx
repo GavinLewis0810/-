@@ -42,37 +42,63 @@ export default function LoginPage() {
 
   return (
     <View className='login-page'>
-      <View className='login-card'>
-        <Text className='login-logo'>💰</Text>
-        <Text className='login-title'>智能发票报销系统</Text>
-        <Text className='login-subtitle'>AI-Powered Invoice Manager</Text>
+      {/* 顶部品牌背景区 */}
+      <View className='brand-header'>
+        <View className='logo-circle'>
+          <Text className='logo-icon'>💰</Text>
+        </View>
+        <Text className='brand-title'>智能发票报销系统</Text>
+        <Text className='brand-subtitle'>AI-Powered Invoice Manager</Text>
+      </View>
 
-        <View className='login-form'>
-          <Input
-            className='login-input'
-            placeholder='用户名'
-            placeholderClass='login-placeholder'
-            value={username}
-            onInput={e => setUsername(e.detail.value)}
-          />
-          <Input
-            className='login-input'
-            placeholder='密码'
-            placeholderClass='login-placeholder'
-            password
-            value={password}
-            onInput={e => setPassword(e.detail.value)}
-          />
+      {/* 悬浮登录表单卡片 */}
+      <View className='form-container'>
+        <View className='ui-card login-card'>
+          <Text className='card-title'>欢迎登录</Text>
+          
+          <View className='input-group'>
+            <View className='input-item'>
+              <Text className='input-label'>账号</Text>
+              <Input
+                className='login-input'
+                placeholder='请输入用户名'
+                placeholderClass='input-placeholder'
+                value={username}
+                onInput={e => setUsername(e.detail.value)}
+              />
+            </View>
+            
+            <View className='input-item'>
+              <Text className='input-label'>密码</Text>
+              <Input
+                className='login-input'
+                placeholder='请输入密码'
+                placeholderClass='input-placeholder'
+                password
+                value={password}
+                onInput={e => setPassword(e.detail.value)}
+              />
+            </View>
+          </View>
+
           <Button
             className='login-btn'
             onClick={handleLogin}
             loading={loading}
             disabled={loading}
           >
-            登 录
+            {loading ? '登录中...' : '登 录'}
           </Button>
-          <Text className='login-hint'>使用 Web 端账号登录</Text>
+
+          <View className='hint-wrapper'>
+            <Text className='login-hint'>使用 Web 端账号进行登录</Text>
+          </View>
         </View>
+      </View>
+      
+      {/* 底部版权信息 */}
+      <View className='footer-info'>
+        <Text>提供安全的企业级财务报销服务</Text>
       </View>
     </View>
   );

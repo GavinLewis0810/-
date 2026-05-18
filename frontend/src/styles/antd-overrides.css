@@ -1,10 +1,9 @@
-/* Ant Design Theme Overrides for Invoice Manager */
+/* Ant Design Theme Overrides — Blue themed */
 
 /* ================ BUTTONS ================ */
-/* Primary Button - Red brand color */
 .ant-btn-primary {
-  background-color: var(--red-primary) !important;
-  border-color: var(--red-primary) !important;
+  background-color: var(--primary) !important;
+  border-color: var(--primary) !important;
   font-family: var(--font-secondary);
   font-weight: var(--font-weight-medium);
   border-radius: var(--radius-base);
@@ -12,8 +11,8 @@
 
 .ant-btn-primary:hover,
 .ant-btn-primary:focus {
-  background-color: #C41E10 !important;
-  border-color: #C41E10 !important;
+  background-color: var(--primary-hover) !important;
+  border-color: var(--primary-hover) !important;
 }
 
 /* Default Button */
@@ -27,8 +26,8 @@
 
 .ant-btn-default:hover,
 .ant-btn-default:focus {
-  border-color: var(--red-primary);
-  color: var(--red-primary);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 /* ================ TABLE ================ */
@@ -56,7 +55,7 @@
 }
 
 .ant-table-tbody > tr:hover > td {
-  background-color: var(--surface) !important;
+  background-color: rgba(79, 70, 229, 0.03) !important;
 }
 
 .ant-table-tbody > tr:last-child > td {
@@ -65,7 +64,7 @@
 
 /* Table Row Selection */
 .ant-table-tbody > tr.ant-table-row-selected > td {
-  background-color: rgba(228, 35, 19, 0.05) !important;
+  background-color: var(--primary-light) !important;
 }
 
 /* ================ INPUT ================ */
@@ -85,8 +84,8 @@
 .ant-input:focus,
 .ant-input-affix-wrapper:focus,
 .ant-input-affix-wrapper-focused {
-  border-color: var(--red-primary);
-  box-shadow: 0 0 0 2px rgba(228, 35, 19, 0.1);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-light);
 }
 
 /* ================ SELECT ================ */
@@ -101,8 +100,8 @@
 }
 
 .ant-select-focused .ant-select-selector {
-  border-color: var(--red-primary) !important;
-  box-shadow: 0 0 0 2px rgba(228, 35, 19, 0.1) !important;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 2px var(--primary-light) !important;
 }
 
 /* ================ TAG / BADGE ================ */
@@ -115,10 +114,9 @@
   border: none;
 }
 
-/* Status Tags */
 .ant-tag-success,
 .ant-tag-green {
-  background-color: rgba(34, 197, 94, 0.1);
+  background-color: rgba(16, 185, 129, 0.1);
   color: var(--success-dark);
 }
 
@@ -151,16 +149,16 @@
 }
 
 .ant-pagination-item:hover {
-  border-color: var(--red-primary);
+  border-color: var(--primary);
 }
 
 .ant-pagination-item:hover a {
-  color: var(--red-primary);
+  color: var(--primary);
 }
 
 .ant-pagination-item-active {
-  border-color: var(--red-primary);
-  background-color: var(--red-primary);
+  border-color: var(--primary);
+  background-color: var(--primary);
 }
 
 .ant-pagination-item-active a {
@@ -221,7 +219,7 @@
 }
 
 .ant-breadcrumb a:hover {
-  color: var(--red-primary);
+  color: var(--primary);
 }
 
 /* ================ UPLOAD ================ */
@@ -233,11 +231,11 @@
 }
 
 .ant-upload-drag:hover {
-  border-color: var(--red-primary) !important;
+  border-color: var(--primary) !important;
 }
 
 .ant-upload-drag-icon .anticon {
-  color: var(--red-primary) !important;
+  color: var(--primary) !important;
 }
 
 /* ================ MESSAGE / NOTIFICATION ================ */

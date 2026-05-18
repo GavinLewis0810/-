@@ -1,0 +1,39 @@
+page { background: #f7f8fa; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+
+.ac-page { height: 100vh; position: relative; }
+
+.ac-card {
+  background: #fff; border-radius: 12px; padding: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04); margin: 12px 16px;
+
+  .ac-card-title { font-size: 14px; font-weight: 600; color: #1a1a2e; display: block; margin-bottom: 10px; }
+}
+
+.ac-input {
+  background: #f7f8fa; border-radius: 8px; padding: 12px; font-size: 14px; color: #1a1a2e;
+  margin-top: 8px;
+  &.amount-input { font-size: 22px; font-weight: 700; color: #2f54eb; }
+}
+
+.ph { color: #c8c9cc; }
+
+.picker-box {
+  background: #f7f8fa; border-radius: 8px; padding: 12px;
+  .picker-val { font-size: 14px; color: #1a1a2e; }
+  .picker-ph { font-size: 14px; color: #c8c9cc; }
+}
+
+/* ── 底部提交栏 ── */
+.submit-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  padding: 12px 16px; padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  background: #fff; border-top: 1px solid #f0f0f0;
+
+  .submit-btn {
+    background: linear-gradient(135deg, #2f54eb, #597ef7);
+    border-radius: 12px; padding: 14px; text-align: center;
+    box-shadow: 0 6px 18px rgba(47,84,235,0.25);
+    &:active { opacity: 0.9; }
+    .submit-text { font-size: 16px; font-weight: 600; color: #fff; }
+  }
+}

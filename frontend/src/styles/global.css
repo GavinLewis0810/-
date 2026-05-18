@@ -22,7 +22,7 @@ body {
   font-weight: var(--font-weight-normal);
   line-height: var(--line-height-normal);
   color: var(--foreground);
-  background-color: var(--background);
+  background-color: var(--surface);
 }
 
 #root {
@@ -68,18 +68,18 @@ p {
 
 /* Links */
 a {
-  color: var(--red-primary);
+  color: var(--primary);
   text-decoration: none;
   transition: color var(--transition-fast);
 }
 
 a:hover {
-  color: var(--foreground);
+  color: var(--primary-hover);
 }
 
 /* Focus States */
 :focus-visible {
-  outline: 2px solid var(--red-primary);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -104,7 +104,7 @@ a:hover {
 
 /* Selection */
 ::selection {
-  background: var(--red-primary);
+  background: var(--primary);
   color: var(--background);
 }
 

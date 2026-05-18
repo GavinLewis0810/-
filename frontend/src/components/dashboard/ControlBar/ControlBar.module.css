@@ -3,7 +3,10 @@
   justify-content: space-between;
   align-items: center;
   gap: var(--spacing-md);
-  padding: var(--spacing-base) 0;
+  padding: var(--spacing-lg) var(--spacing-xl);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
 }
 
 .leftSection {
@@ -11,11 +14,13 @@
   align-items: center;
   gap: var(--spacing-md);
   flex: 1;
+  flex-wrap: wrap;
 }
 
 .rightSection {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .searchInput {
@@ -23,7 +28,7 @@
 }
 
 .statusFilter {
-  min-width: 120px;
+  min-width: 130px;
 }
 
 .dateRange {
@@ -35,4 +40,7 @@
   font-size: var(--font-size-sm);
   color: var(--muted-foreground);
   white-space: nowrap;
+  background: var(--surface);
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
 }

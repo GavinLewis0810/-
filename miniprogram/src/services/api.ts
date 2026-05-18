@@ -8,7 +8,6 @@ import Taro from '@tarojs/taro';
 import { storage } from '../utils/storage';
 import type {
   Invoice,
-  InvoiceDetail,
   InvoiceListResponse,
   UploadResponse,
   UserProfile,
@@ -20,7 +19,7 @@ import type {
 
 // ── 基础配置 ──
 // 开发时指向本地后端；上线前改为正式域名
-const API_BASE = 'http://127.0.0.1:18080/api';
+const API_BASE = 'http://10.105.12.33:18080/api';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -98,7 +97,7 @@ export const listInvoices = async (params: ListParams = {}): Promise<InvoiceList
   return request('/invoices', { params });
 };
 
-export const getInvoice = async (id: number): Promise<InvoiceDetail> => {
+export const getInvoice = async (id: number): Promise<Invoice> => {
   return request(`/invoices/${id}`);
 };
 
@@ -233,4 +232,82 @@ export const updateProfile = async (data: {
 
 export const changePassword = async (data: { old_password: string; new_password: string }) => {
   return request('/auth/password', { method: 'PUT', data });
+};
+
+// ── 事前申请 ──
+import type { ApplicationItem, BorrowingItem, BankCardItem, TransactionItem, ReasonCategory } from '../types';
+
+export const getApplications = async (): Promise<ApplicationItem[]> => {
+  return request('/applications');
+};
+
+export const createApplication = async (data: {
+  title: string; description?: string; estimated_amount: number;
+  project_code?: string; reason_category_id?: number;
+}): Promise<ApplicationItem> => {
+  return request('/applications', { method: 'POST', data });
+};
+
+export const approveApplication = async (id: number): Promise<void> => {
+  return request(`/applications/${id}/approve`, { method: 'PUT' });
+};
+
+export const rejectApplication = async (id: number, reason: string): Promise<void> => {
+  return request(`/applications/${id}/reject`, { method: 'PUT', data: { reason } });
+};
+
+export const deleteApplication = async (id: number): Promise<void> => {
+  return request(`/applications/${id}`, { method: 'DELETE' });
+};
+
+// ── 借款 ──
+export const getBorrowings = async (): Promise<BorrowingItem[]> => {
+  return request('/borrowings');
+};
+
+export const createBorrowing = async (data: {
+  title?: string; estimated_amount: number;
+  expected_repayment_date?: string; application_id?: number;
+}): Promise<BorrowingItem> => {
+  return request('/borrowings', { method: 'POST', data });
+};
+
+export const approveBorrowing = async (id: number): Promise<BorrowingItem> => {
+  return request(`/borrowings/${id}/approve`, { method: 'PUT' });
+};
+
+export const rejectBorrowing = async (id: number, reason: string): Promise<BorrowingItem> => {
+  return request(`/borrowings/${id}/reject`, { method: 'PUT', data: { reason } });
+};
+
+export const deleteBorrowing = async (id: number): Promise<void> => {
+  return request(`/borrowings/${id}`, { method: 'DELETE' });
+};
+
+// ── 银行卡 ──
+export const getBankCards = async (): Promise<BankCardItem[]> => {
+  return request('/bank-cards');
+};
+
+export const addBankCard = async (data: {
+  bank_name: string; account_name: string; card_number: string;
+}): Promise<BankCardItem> => {
+  return request('/bank-cards', { method: 'POST', data });
+};
+
+export const setDefaultBankCard = async (id: number): Promise<void> => {
+  return request(`/bank-cards/${id}/default`, { method: 'PUT' });
+};
+
+export const deleteBankCard = async (id: number): Promise<void> => {
+  return request(`/bank-cards/${id}`, { method: 'DELETE' });
+};
+
+export const getTransactions = async (): Promise<TransactionItem[]> => {
+  return request('/bank-cards/transactions');
+};
+
+// ── 事由类别 ──
+export const getReasonCategories = async (): Promise<ReasonCategory[]> => {
+  return request('/reason-categories');
 };

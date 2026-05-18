@@ -1,37 +1,101 @@
-.page { background: #0a0e27; min-height: 100vh; padding-bottom: 40px; }
+page { background: #f7f8fa; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
 
-.top-bar { padding: 24px 28px 8px; }
-.top-title { font-size: 40px; font-weight: 700; color: #fff; display: block; }
-.top-subtitle { font-size: 24px; color: rgba(255,255,255,0.35); margin-top: 4px; display: block; }
+.dash-page { height: 100vh; padding-bottom: 40px; }
 
-.kpi-grid {
-  display: flex; flex-wrap: wrap; padding: 16px 20px; gap: 12px;
+/* ── 顶部欢迎横幅 ── */
+.dash-banner {
+  background: linear-gradient(135deg, #2f54eb 0%, #597ef7 100%);
+  padding: 28px 20px 36px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  flex-shrink: 0;
+
+  .banner-left {
+    .banner-greeting { font-size: 15px; color: rgba(255,255,255,0.75); display: block; margin-bottom: 4px; }
+    .banner-name { font-size: 22px; font-weight: 700; color: #fff; display: block; }
+  }
+  .banner-right {
+    position: relative; padding: 8px;
+    .bell-icon { font-size: 22px; }
+    .badge {
+      position: absolute; top: 0; right: 0;
+      min-width: 18px; height: 18px; border-radius: 9px;
+      background: #E42313; display: flex; align-items: center; justify-content: center;
+      .badge-num { font-size: 10px; color: #fff; font-weight: 600; }
+    }
+  }
 }
+
+/* ── 通用区块 ── */
+.dash-section { padding: 0 16px; margin-bottom: 12px; }
+
+.section-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+  .section-title { font-size: 16px; font-weight: 700; color: #1a1a2e; }
+  .section-more { font-size: 13px; color: #2f54eb; }
+}
+.section-title { font-size: 16px; font-weight: 700; color: #1a1a2e; margin-bottom: 10px; display: block; }
+
+/* ── KPI 卡片 ── */
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: -18px; }
 .kpi-card {
-  flex: 1 1 calc(50% - 18px); min-width: 160px;
-  background: #111633; border-radius: 16px; padding: 20px 16px;
+  background: #fff; border-radius: 12px; padding: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04); border-top: 3px solid transparent;
+  .kpi-icon { font-size: 24px; display: block; margin-bottom: 6px; }
+  .kpi-value { font-size: 26px; font-weight: 700; }
+  .kpi-unit { font-size: 14px; margin-left: 2px; }
+  .kpi-label { font-size: 12px; color: #969799; display: block; margin-top: 2px; }
 }
-.kpi-icon { font-size: 32px; display: block; margin-bottom: 8px; }
-.kpi-value { font-size: 36px; font-weight: 700; }
-.kpi-unit { font-size: 20px; margin-left: 4px; }
-.kpi-label { font-size: 22px; color: rgba(255,255,255,0.4); display: block; margin-top: 4px; }
 
-.section {
-  background: #111633; border-radius: 16px; padding: 24px; margin: 16px 24px;
+/* ── 快捷操作 ── */
+.quick-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.action-item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  .action-icon-wrap {
+    width: 48px; height: 48px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .action-icon { font-size: 22px; }
+  .action-label { font-size: 12px; color: #323233; font-weight: 500; }
 }
-.section-title { font-size: 30px; font-weight: 600; color: #fff; margin-bottom: 16px; display: block; }
 
-.budget-row { display: flex; align-items: center; padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
-.budget-info { flex: 1; margin-right: 12px; }
-.budget-name { font-size: 26px; color: #fff; display: block; }
-.budget-amount { font-size: 22px; color: rgba(255,255,255,0.35); }
-.progress-bar { flex: 1.5; height: 10px; background: rgba(255,255,255,0.06); border-radius: 5px; overflow: hidden; margin-right: 12px; }
-.progress-fill { height: 100%; border-radius: 5px; transition: width 0.5s; }
-.budget-rate { font-size: 24px; font-weight: 600; width: 70px; text-align: right; }
+/* ── 迷你列表卡片 ── */
+.mini-card {
+  background: #fff; border-radius: 12px; padding: 14px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+  &:active { background: #f9f9f9; }
 
-.warning-card {
-  background: rgba(228,35,19,0.06); border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  .mini-left {
+    flex: 1; margin-right: 12px;
+    .mini-name { font-size: 14px; font-weight: 600; color: #1a1a2e; display: block; margin-bottom: 4px; }
+    .mini-meta { font-size: 12px; color: #969799; }
+    .mini-meta-row { display: flex; align-items: center; gap: 6px; }
+  }
+  .mini-amount { font-size: 16px; font-weight: 700; color: #1a1a2e; white-space: nowrap; }
 }
-.warn-project { font-size: 28px; font-weight: 600; color: #fff; display: block; margin-bottom: 6px; }
-.warn-text { font-size: 24px; color: #faad14; display: block; }
-.warn-date { font-size: 22px; color: rgba(255,255,255,0.35); margin-top: 4px; display: block; }
+
+.empty-card {
+  background: #fff; border-radius: 12px; padding: 24px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+  .empty-text { font-size: 13px; color: #969799; text-align: center; display: block; }
+}
+
+/* ── 状态点 ── */
+.status-dot {
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  &.dot-warn { color: #ff9900; background: rgba(255,153,0,0.1); }
+  &.dot-default { color: #969799; background: #f1f2f5; }
+}
+
+/* ── 预警卡片 ── */
+.warn-card {
+  background: #fff; border-radius: 12px; padding: 14px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.03); margin-bottom: 8px;
+  border-left: 4px solid #E42313;
+  .warn-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .warn-project { font-size: 14px; font-weight: 600; color: #1a1a2e; }
+  .warn-level { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+  .warn-desc { font-size: 12px; color: #969799; display: block; }
+  .warn-date { font-size: 11px; color: #c8c9cc; display: block; }
+}

@@ -1,85 +1,157 @@
+page {
+  background-color: #f7f8fa; // 高级浅灰底色
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, sans-serif;
+}
+
 .login-page {
-  display: flex;
-  justify-content: center;
-  align-items: center;
   min-height: 100vh;
-  background: linear-gradient(180deg, #0a0e27 0%, #111633 100%);
-}
-
-.login-card {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 80px 48px;
-}
+  position: relative;
 
-.login-logo {
-  font-size: 80px;
-  margin-bottom: 24px;
-}
+  /* --- 顶部品牌区 (科技蓝渐变) --- */
+  .brand-header {
+    background: linear-gradient(135deg, #2f54eb 0%, #597ef7 100%);
+    padding: 60px 20px 80px; /* 底部多留白，给卡片悬浮 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #ffffff;
 
-.login-title {
-  font-size: 40px;
-  font-weight: 700;
-  color: #fff;
-  margin-bottom: 8px;
-}
+    .logo-circle {
+      width: 72px;
+      height: 72px;
+      background: #ffffff;
+      border-radius: 36px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+      margin-bottom: 20px;
 
-.login-subtitle {
-  font-size: 24px;
-  color: rgba(255,255,255,0.4);
-  margin-bottom: 48px;
-}
+      .logo-icon {
+        font-size: 36px;
+      }
+    }
 
-.login-features {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-bottom: 56px;
-}
+    .brand-title {
+      font-size: 24px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
 
-.login-feature {
-  font-size: 28px;
-  color: rgba(255,255,255,0.65);
-}
+    .brand-subtitle {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.8);
+      font-family: monospace;
+    }
+  }
 
-.login-form {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
+  /* --- 表单容器 (负边距悬浮效果) --- */
+  .form-container {
+    padding: 0 20px;
+    margin-top: -40px; /* 卡片向上位移，覆盖在蓝色背景上 */
+    flex: 1;
 
-.login-input {
-  width: 520px;
-  height: 88px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 16px;
-  color: #fff;
-  font-size: 30px;
-  padding: 0 24px;
-  margin-bottom: 20px;
-}
-.login-placeholder {
-  color: rgba(255,255,255,0.25);
-}
+    .ui-card {
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+      padding: 32px 24px;
+      box-sizing: border-box;
 
-.login-btn {
-  width: 520px;
-  height: 88px;
-  line-height: 88px;
-  background: #07c160;
-  color: #fff;
-  font-size: 32px;
-  font-weight: 600;
-  border-radius: 16px;
-  border: none;
-  margin-top: 12px;
-}
+      .card-title {
+        display: block;
+        font-size: 20px;
+        font-weight: 600;
+        color: #323233;
+        margin-bottom: 24px;
+      }
+    }
+  }
 
-.login-hint {
-  font-size: 22px;
-  color: rgba(255,255,255,0.3);
-  margin-top: 24px;
+  /* --- Vant 风格的精美输入框 --- */
+  .input-group {
+    margin-bottom: 32px;
+
+    .input-item {
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid #ebedf0;
+      padding: 16px 0;
+      transition: all 0.3s;
+
+      &:focus-within {
+        border-bottom-color: #2f54eb; /* 聚焦时底边框变蓝 */
+      }
+
+      .input-label {
+        width: 60px;
+        font-size: 15px;
+        color: #323233;
+        font-weight: 500;
+      }
+
+      .login-input {
+        flex: 1;
+        font-size: 15px;
+        color: #323233;
+      }
+
+      .input-placeholder {
+        color: #c8c9cc;
+        font-size: 15px;
+      }
+    }
+  }
+
+  /* --- 按钮与提示语 --- */
+  .login-btn {
+    background: #2f54eb;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 500;
+    height: 48px;
+    line-height: 48px;
+    border-radius: 24px; // 大圆角按钮
+    border: none;
+    box-shadow: 0 4px 12px rgba(47, 84, 235, 0.2); // 科技蓝柔和发光阴影
+
+    &::after {
+      border: none;
+    }
+
+    &:active {
+      opacity: 0.8;
+      transform: scale(0.98);
+    }
+    
+    &[disabled] {
+      background: #a0b5f8 !important;
+      color: #ffffff !important;
+      box-shadow: none;
+    }
+  }
+
+  .hint-wrapper {
+    margin-top: 24px;
+    text-align: center;
+    
+    .login-hint {
+      font-size: 13px;
+      color: #969799;
+    }
+  }
+
+  /* --- 底部兜底声明 --- */
+  .footer-info {
+    text-align: center;
+    padding-bottom: 32px;
+    
+    text {
+      font-size: 12px;
+      color: #c8c9cc;
+    }
+  }
 }

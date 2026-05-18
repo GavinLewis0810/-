@@ -1,0 +1,67 @@
+page { background: #f7f8fa; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+
+.app-page { height: 100vh; display: flex; flex-direction: column; }
+
+/* ── 顶部横幅 ── */
+.app-banner {
+  background: linear-gradient(135deg, #2f54eb 0%, #597ef7 100%);
+  padding: 24px 20px 36px; flex-shrink: 0;
+  .banner-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .banner-title { font-size: 22px; font-weight: 700; color: #fff; }
+  .create-btn {
+    background: rgba(255,255,255,0.2); backdrop-filter: blur(4px);
+    padding: 6px 14px; border-radius: 16px;
+    .create-text { font-size: 13px; color: #fff; font-weight: 500; }
+  }
+  .banner-sub { font-size: 13px; color: rgba(255,255,255,0.7); }
+}
+
+/* ── 滚动区 ── */
+.app-scroll { flex: 1; margin-top: -18px; }
+.app-container { padding: 0 16px 100px; }
+
+/* ── 申请卡片 ── */
+.app-card {
+  background: #fff; border-radius: 12px; padding: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04); margin-bottom: 10px;
+  &:active { background: #f9f9f9; }
+
+  .card-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px dashed #ebedf0;
+    .card-title { font-size: 15px; font-weight: 600; color: #1a1a2e; flex: 1; margin-right: 10px; }
+    .status-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 500; white-space: nowrap; }
+  }
+
+  .card-body {
+    display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 12px;
+    .body-item {
+      .item-label { font-size: 11px; color: #969799; display: block; margin-bottom: 2px; }
+      .item-value { font-size: 13px; color: #323233; font-weight: 500; }
+      .amount { font-weight: 700; color: #1a1a2e; }
+    }
+  }
+
+  .card-foot {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #f8f9fa; margin: 0 -16px -16px; padding: 10px 16px;
+    border-radius: 0 0 12px 12px;
+    .foot-meta { font-size: 12px; color: #969799; }
+    .foot-reason { font-size: 11px; color: #E42313; flex: 1; margin-left: 8px; }
+    .foot-actions { display: flex; gap: 12px; }
+    .act-delete { font-size: 12px; color: #E42313; padding: 4px 0; }
+  }
+}
+
+/* ── 空状态 ── */
+.empty-wrap {
+  display: flex; flex-direction: column; align-items: center; padding: 80px 0;
+  .empty-icon-circle {
+    width: 72px; height: 72px; border-radius: 36px; background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.04); margin-bottom: 14px;
+    .empty-icon { font-size: 32px; }
+  }
+  .empty-text { font-size: 15px; color: #323233; font-weight: 500; margin-bottom: 6px; }
+  .empty-hint { font-size: 13px; color: #969799; }
+}

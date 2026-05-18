@@ -1,75 +1,238 @@
-.page {
-  background: #0a0e27;
-  min-height: 100vh;
-  padding-bottom: 40px;
+page {
+  background-color: #f7f8fa; // 统一浅灰底色
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, sans-serif;
 }
 
-.loading {
-  text-align: center;
-  padding: 200px 0;
-  color: rgba(255,255,255,0.45);
-  font-size: 28px;
+.invoice-detail-page {
+  height: 100vh;
+  box-sizing: border-box;
+
+  .detail-container {
+    padding: 16px 16px 40px 16px;
+  }
+
+  /* --- 全局卡片标准组件 --- */
+  .ui-card {
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+    margin-bottom: 16px;
+    padding: 20px 16px;
+    box-sizing: border-box;
+  }
+
+  /* --- 卡片头部排版 --- */
+  .card-header-mini {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+
+    .header-title-text {
+      font-size: 14px;
+      font-weight: 500;
+      color: #646566;
+    }
+    .header-action-text {
+      font-size: 12px;
+      color: #969799;
+    }
+  }
+
+  .card-header-main {
+    margin-bottom: 16px;
+    border-bottom: 1px solid #f2f3f5;
+    padding-bottom: 12px;
+
+    .header-title-text {
+      font-size: 15px;
+      font-weight: bold;
+      color: #323233;
+    }
+  }
+
+  /* --- 🧾 影像图片框样式（包含抗锯齿黑魔法） --- */
+  .preview-card {
+    padding: 14px;
+
+    .image-box {
+      width: 100%;
+      background: #fafafa;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border: 1px dashed #ebedf0;
+
+      .invoice-preview-img {
+        width: 100%;
+        display: block;
+        
+        /* 避免在部分特定机型上由于缩放产生的边缘模糊 */
+        image-rendering: -webkit-optimize-contrast;
+      }
+    }
+  }
+
+  /* --- 🔍 数据单项列表排版 --- */
+  .fields-list {
+    .field-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 12px 0;
+      border-bottom: 1px solid #fafafa;
+      font-size: 14px;
+
+      &:last-child {
+        border-bottom: none;
+      }
+
+      .field-label {
+        color: #646566;
+        min-width: 90px;
+        flex-shrink: 0;
+      }
+
+      .field-value {
+        color: #323233;
+        text-align: right;
+        word-break: break-all;
+        
+        &.font-mono {
+          font-family: monospace; // 提升发票号码的规整度
+        }
+      }
+
+      /* 碳足迹高亮绿 */
+      .carbon-value-text {
+        color: #07c160;
+        font-weight: 600;
+      }
+
+      /* 核心价格合并大字行高亮 */
+      &.row-amount-highlight {
+        background: rgba(47, 84, 235, 0.04); // 极淡的科技蓝背景
+        margin: 6px -16px;
+        padding: 14px 16px;
+        align-items: center;
+
+        .field-label {
+          color: #2f54eb;
+          font-weight: bold;
+        }
+
+        .amount-text {
+          font-size: 20px;
+          font-weight: bold;
+          color: #2f54eb;
+        }
+      }
+
+      /* 精准复刻大厂克制化状态标签 */
+      .status-tag {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: 500;
+        white-space: nowrap;
+
+        &.tag-upl { color: #2f54eb; background: rgba(47, 84, 235, 0.1); }
+        &.tag-proc { color: #1677ff; background: rgba(22, 119, 255, 0.1); }
+        &.tag-conf { color: #07c160; background: rgba(7, 193, 96, 0.1); }
+        &.tag-reim { color: #07c160; background: rgba(7, 193, 96, 0.2); }
+        &.tag-pend { color: #ff9900; background: rgba(255, 153, 0, 0.1); }
+      }
+    }
+  }
+
+  /* --- 📦 消费商品明细阶梯排列 --- */
+  .items-list-wrapper {
+    .item-detail-row {
+      padding: 14px 0;
+      border-bottom: 1px solid #f5f6f7;
+      display: flex;
+      flex-direction: column;
+
+      &:last-child {
+        border-bottom: none;
+      }
+
+      .item-top-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 6px;
+
+        .item-badge {
+          background: #f2f3f5;
+          color: #646566;
+          font-size: 11px;
+          width: 18px;
+          height: 18px;
+          border-radius: 9px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-right: 8px;
+          font-family: monospace;
+        }
+
+        .item-name-text {
+          font-size: 14px;
+          color: #323233;
+          font-weight: 500;
+          flex: 1;
+        }
+      }
+
+      .item-bottom-row {
+        display: flex;
+        justify-content: space-between;
+        padding-left: 26px; /* 与上方的商品名称完美垂直对齐 */
+
+        .item-formula-text {
+          font-size: 12px;
+          color: #969799;
+          font-family: monospace;
+        }
+
+        .item-subtotal-text {
+          font-size: 14px;
+          color: #323233;
+          font-weight: 600;
+        }
+      }
+    }
+  }
+
+  /* --- ⏳ 优雅的全屏加载框 --- */
+  .loading-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+
+    .loading-text {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #969799;
+    }
+
+    .loading-spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #ebedf0;
+      border-top-color: #2f54eb;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+  }
 }
 
-.preview-box {
-  margin: 24px;
-  border-radius: 16px;
-  overflow: hidden;
-  background: #111633;
-}
-.preview-img {
-  width: 100%;
-}
-.preview-hint {
-  text-align: center;
-  display: block;
-  padding: 12px;
-  font-size: 22px;
-  color: rgba(255,255,255,0.3);
-}
-
-.info-card {
-  background: #111633;
-  border-radius: 16px;
-  padding: 24px;
-  margin: 0 24px 16px;
-}
-.section-title {
-  font-size: 30px;
-  font-weight: 600;
-  color: #fff;
-  margin-bottom: 20px;
-  display: block;
-}
-
-.field-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 14px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-.field-label {
-  font-size: 26px;
-  color: rgba(255,255,255,0.45);
-}
-.field-value {
-  font-size: 26px;
-  color: rgba(255,255,255,0.85);
-  text-align: right;
-  max-width: 55%;
-}
-
-.item-row {
-  padding: 16px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-.item-name {
-  font-size: 26px;
-  color: #fff;
-  display: block;
-  margin-bottom: 6px;
-}
-.item-detail {
-  font-size: 24px;
-  color: rgba(255,255,255,0.4);
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

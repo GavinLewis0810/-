@@ -74,6 +74,22 @@ export default function ProfilePage() {
           <Text className='menu-text'>📸 上传发票</Text>
           <Text className='menu-arrow'>›</Text>
         </View>
+        <View className='menu-item' onClick={() => Taro.navigateTo({ url: '/pages/applications/index' })}>
+          <Text className='menu-text'>📋 事前申请</Text>
+          <Text className='menu-arrow'>›</Text>
+        </View>
+        <View className='menu-item' onClick={() => Taro.navigateTo({ url: '/pages/borrowings/index' })}>
+          <Text className='menu-text'>💳 借款记录</Text>
+          <Text className='menu-arrow'>›</Text>
+        </View>
+        <View className='menu-item' onClick={() => Taro.navigateTo({ url: '/pages/bank-cards/index' })}>
+          <Text className='menu-text'>🏦 银行卡管理</Text>
+          <Text className='menu-arrow'>›</Text>
+        </View>
+        <View className='menu-item' onClick={() => Taro.navigateTo({ url: '/pages/notifications/index' })}>
+          <Text className='menu-text'>🔔 消息通知</Text>
+          <Text className='menu-arrow'>›</Text>
+        </View>
       </View>
 
       {/* 退出 */}

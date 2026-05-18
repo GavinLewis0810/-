@@ -1,3 +1,3 @@
 export default {
-  navigationBarTitleText: '财务大屏',
+  navigationBarTitleText: '工作台',
 };

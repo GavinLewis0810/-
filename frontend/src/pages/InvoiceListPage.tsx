@@ -25,6 +25,10 @@ import {
   SyncOutlined,
   AuditOutlined,
   CheckOutlined,
+  FileTextOutlined,
+  DollarOutlined,
+  PercentageOutlined,
+  RiseOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
@@ -756,10 +760,9 @@ function InvoiceListPage() {
             onClick={() => handleExport('excel')}
             className={styles.secondaryButton}
           >
-            导出
+            导出Excel
           </Button>
           <Button
-            type="primary"
             icon={<UploadOutlined />}
             onClick={() => navigate('/upload')}
             className={styles.primaryButton}
@@ -774,21 +777,29 @@ function InvoiceListPage() {
         <MetricCard
           label="发票数量"
           value={pageStatistics.count}
+          icon={<FileTextOutlined style={{ fontSize: 20 }} />}
+          gradient="#4F46E5, #6366F1"
         />
         <MetricCard
           label="金额合计"
           value={pageStatistics.totalAmount.toFixed(2)}
           prefix="¥"
+          icon={<DollarOutlined style={{ fontSize: 20 }} />}
+          gradient="#10B981, #34D399"
         />
         <MetricCard
           label="税额合计"
           value={pageStatistics.totalTax.toFixed(2)}
           prefix="¥"
+          icon={<PercentageOutlined style={{ fontSize: 20 }} />}
+          gradient="#F59E0B, #FBBF24"
         />
         <MetricCard
           label="价税合计"
           value={pageStatistics.totalWithTax.toFixed(2)}
           prefix="¥"
+          icon={<RiseOutlined style={{ fontSize: 20 }} />}
+          gradient="#8B5CF6, #A78BFA"
         />
       </div>
 
@@ -862,7 +873,8 @@ function InvoiceListPage() {
 
         {selectedRowKeys.length > 0 && (
           <>
-            <span style={{ lineHeight: '32px' }}>
+            <div className={styles.controlDivider} />
+            <span className={styles.selectedBadge}>
               已选择 {selectedRowKeys.length} 项
             </span>
 
@@ -871,7 +883,6 @@ function InvoiceListPage() {
               type="primary"
               icon={<AuditOutlined />}
               onClick={handleOpenReimburseModal}
-              style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
             >
               打包报销 (已选 {selectedRowKeys.length} 张)
             </Button>

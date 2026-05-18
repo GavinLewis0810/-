@@ -1,9 +1,12 @@
-/* Sidebar Container */
+/* ============================================================
+   Sidebar — Dark blue gradient with cyan accents
+   ============================================================ */
+
+/* ── Container ── */
 .sidebar {
   width: var(--sidebar-width);
   height: 100vh;
-  background-color: var(--background);
-  border-right: 1px solid var(--border);
+  background: linear-gradient(170deg, #1E293B 0%, #1E3A5F 40%, #0F172A 100%);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -12,170 +15,247 @@
   left: 0;
   top: 0;
   z-index: var(--z-fixed);
+  overflow-y: auto;
 }
 
-/* Sidebar Top Section */
+/* ── Top section ── */
 .sidebarTop {
   display: flex;
   flex-direction: column;
-  gap: 48px;
+  gap: 28px;
 }
 
-/* Logo Section */
+/* ── Logo ── */
 .logo {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .logoMark {
-  width: 28px;
-  height: 28px;
-  background-color: var(--red-primary);
-  border-radius: var(--radius-base);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #22D3EE, #4F46E5);
+  box-shadow: 0 4px 12px rgba(34, 211, 238, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logoMarkInner {
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 3px;
+  opacity: 0.9;
 }
 
 .logoText {
   font-family: var(--font-primary);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
-  color: var(--foreground);
+  color: #F1F5F9;
 }
 
-/* Navigation Section */
+/* ── Navigation wrapper ── */
 .navigation {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
+/* ── Nav item (shared by standalone & child) ── */
 .navItem {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 0;
+  padding: 10px 12px;
   cursor: pointer;
   text-decoration: none;
-  transition: color var(--transition-fast);
+  border-radius: var(--radius-base);
+  transition: all var(--transition-fast);
 }
-
+.navItem:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
 .navItem:hover .navLabel {
-  color: var(--foreground);
+  color: #E2E8F0;
 }
-
 .navItem:focus-visible {
-  outline: 2px solid var(--red-primary);
+  outline: 2px solid var(--cyan-400);
   outline-offset: 2px;
 }
 
+/* Active dot + label */
 .navDot {
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
   background-color: transparent;
   flex-shrink: 0;
+  transition: background var(--transition-fast);
 }
-
+.navItem.active {
+  background: rgba(255, 255, 255, 0.08);
+}
 .navItem.active .navDot {
-  background-color: var(--red-primary);
+  background-color: var(--cyan-400);
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.5);
 }
-
 .navLabel {
   font-family: var(--font-primary);
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-normal);
-  color: var(--muted-foreground);
+  color: #94A3B8;
   transition: color var(--transition-fast);
 }
-
 .navItem.active .navLabel {
-  color: var(--foreground);
+  color: #22D3EE;
   font-weight: var(--font-weight-medium);
 }
 
-/* Sidebar Bottom Section */
-.sidebarBottom {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+/* ── Child indent ── */
+.navChild {
+  padding-left: 14px;
 }
 
-/* User Profile Section */
+/* ════════════════════════════════════════════
+   Drawer Group
+   ════════════════════════════════════════════ */
+
+.drawerGroup {
+  margin-top: 6px;
+}
+
+/* ── Drawer header ── */
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--radius-base);
+  transition: background var(--transition-fast);
+}
+.drawerHeader:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Chevron arrow */
+.chevron {
+  font-size: 11px;
+  color: #64748B;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+.chevronOpen {
+  transform: rotate(90deg);
+  color: #94A3B8;
+}
+
+.drawerLabel {
+  font-family: var(--font-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: #94A3B8;
+}
+
+/* ── Drawer children (collapsible) ── */
+.drawerChildren {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.2s ease;
+  padding-left: 12px;
+  border-left: 1px solid transparent;
+}
+.drawerOpen {
+  max-height: 400px;
+  opacity: 1;
+  border-left-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ════════════════════════════════════════════
+   Bottom: User Profile
+   ════════════════════════════════════════════ */
+
+.sidebarBottom {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .userProfile {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .userAvatar {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-full);
-  background-color: var(--black-primary);
+  background: linear-gradient(135deg, #22D3EE, #4F46E5);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(34, 211, 238, 0.2);
 }
 
 .userInitial {
   font-family: var(--font-primary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: var(--font-weight-medium);
-  color: var(--background);
+  color: #FFFFFF;
 }
 
 .userInfo {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1;
+  overflow: hidden;
 }
-
 .userName {
   font-family: var(--font-primary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  color: var(--foreground);
+  color: #F1F5F9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
 .userRole {
   font-family: var(--font-secondary);
   font-size: 11px;
   font-weight: var(--font-weight-normal);
-  color: var(--muted-foreground);
+  color: #64748B;
 }
-
-/* LLM Config Button */
-.llmConfigButton {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background-color: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-base);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.llmConfigButton:hover {
-  border-color: var(--red-primary);
-}
-
-.llmConfigButton .statusIcon {
-  font-size: 16px;
-}
-
-.llmConfigButton .statusIcon.configured {
-  color: var(--success);
-}
-
-.llmConfigButton .statusIcon.notConfigured {
-  color: var(--warning);
-}
-
-.llmConfigButton .configText {
+.userDept {
   font-family: var(--font-secondary);
-  font-size: var(--font-size-xs);
-  color: var(--muted-foreground);
+  font-size: 10px;
+  color: #64748B;
+  opacity: 0.7;
+}
+
+.logoutBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  color: #64748B;
+  border-radius: var(--radius-base);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.logoutBtn:hover {
+  color: #22D3EE;
+  background: rgba(34, 211, 238, 0.1);
 }

@@ -82,6 +82,7 @@ function getStyle(title: string): { icon: React.ReactNode; color: string; bg: st
 export default function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
+  const reconnectDelay = useRef(3000);
   const navigate = useNavigate();
 
   const showToast = useCallback((data: WsMessage) => {
@@ -171,6 +172,7 @@ export default function useWebSocket() {
 
     ws.onopen = () => {
       console.log('[WS] 已连接');
+      reconnectDelay.current = 3000;
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
         reconnectTimer.current = null;
@@ -190,8 +192,10 @@ export default function useWebSocket() {
     };
 
     ws.onclose = () => {
-      console.log('[WS] 断开，3s 后重连');
-      reconnectTimer.current = window.setTimeout(connect, 3000);
+      const delay = reconnectDelay.current;
+      console.log(`[WS] 断开，${delay / 1000}s 后重连`);
+      reconnectTimer.current = window.setTimeout(connect, delay);
+      reconnectDelay.current = Math.min(delay * 2, 30000);
     };
 
     ws.onerror = () => ws.close();

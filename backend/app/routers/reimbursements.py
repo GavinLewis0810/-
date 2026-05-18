@@ -1027,9 +1027,13 @@ async def get_reimbursement_timeline(
 @router.get("/dashboard/stats")
 async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     """获取大屏的【全真】统计图表数据 (发票级细粒度拆分)"""
-    # 已报销的发票总数 + 已报销总金额
+    # 已报销的发票总数：计数已通过/已打款报销单关联的发票
     reimbursed_invoice_count = await db.scalar(
-        select(func.count(Invoice.id)).where(Invoice.status == InvoiceStatus.REIMBURSED)
+        select(func.count(Invoice.id)).join(
+            Reimbursement, Invoice.reimbursement_id == Reimbursement.id
+        ).where(
+            Reimbursement.status.in_([ReimbursementStatus.APPROVED, ReimbursementStatus.COMPLETED])
+        )
     ) or 0
     total_reimbursed_amount = await db.scalar(
         select(func.coalesce(func.sum(Reimbursement.total_amount), 0)).where(

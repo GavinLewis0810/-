@@ -1,26 +1,37 @@
-/* Design tokens extracted from invoice-manager.pen */
+/* Design tokens — Blue theme aligned with AuthPage brand panel */
 :root {
   /* Colors - Primary Palette */
   --background: #FFFFFF;
-  --surface: #FAFAFA;
-  --foreground: #0D0D0D;
-  --black-primary: #0D0D0D;
-  --muted-foreground: #7A7A7A;
-  --border: #E8E8E8;
-  --gray-400: #B0B0B0;
+  --surface: #F8FAFC;
+  --foreground: #0F172A;
+  --black-primary: #1E293B;
+  --muted-foreground: #64748B;
+  --border: #E2E8F0;
+  --gray-400: #94A3B8;
 
   /* Colors - Brand */
-  --red-primary: #E42313;
+  --primary: #4F46E5;
+  --primary-hover: #4338CA;
+  --primary-light: rgba(79, 70, 229, 0.10);
+  --primary-glow: rgba(79, 70, 229, 0.25);
+  --cyan-400: #22D3EE;
+  --cyan-500: #06B6D4;
 
   /* Colors - Semantic */
-  --success: #22C55E;
-  --success-dark: #16A34A;
+  --success: #10B981;
+  --success-dark: #059669;
   --warning: #F59E0B;
   --warning-dark: #D97706;
   --error: #EF4444;
   --error-dark: #DC2626;
   --info: #3B82F6;
   --info-dark: #2563EB;
+  --amber-500: #F59E0B;
+  --amber-dark: #D97706;
+  --rose-500: #F43F5E;
+  --rose-dark: #E11D48;
+  --emerald-500: #10B981;
+  --emerald-dark: #059669;
 
   /* Typography - Font Families */
   --font-primary: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -59,9 +70,9 @@
   --spacing-4xl: 48px;
 
   /* Layout */
-  --sidebar-width: 240px;
-  --sidebar-padding-x: 32px;
-  --sidebar-padding-y: 40px;
+  --sidebar-width: 260px;
+  --sidebar-padding-x: 20px;
+  --sidebar-padding-y: 24px;
   --content-padding-x: 48px;
   --content-padding-y: 40px;
   --header-height: 64px;
@@ -69,17 +80,18 @@
   /* Border Radius */
   --radius-none: 0;
   --radius-sm: 2px;
-  --radius-base: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-base: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
   --radius-xl: 12px;
+  --radius-2xl: 16px;
   --radius-full: 9999px;
 
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-base: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.08), 0 4px 6px rgba(0, 0, 0, 0.05);
 
   /* Transitions */
   --transition-fast: 150ms ease;

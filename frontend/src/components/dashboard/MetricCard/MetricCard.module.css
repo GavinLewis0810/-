@@ -1,11 +1,48 @@
 .metricCard {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background-color: var(--background);
+  padding: var(--spacing-xl);
+  transition: all var(--transition-base);
+  box-shadow: var(--shadow-sm);
+}
+
+.metricCard:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+/* Background glow decoration */
+.cardBg {
+  position: absolute;
+  right: -20px;
+  top: -20px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  opacity: 0.06;
+  filter: blur(30px);
+  transition: opacity var(--transition-base);
+}
+
+.metricCard:hover .cardBg {
+  opacity: 0.12;
+}
+
+.cardContent {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.cardLeft {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-base);
-  padding: var(--spacing-xl);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-base);
-  background-color: var(--background);
+  gap: var(--spacing-sm);
 }
 
 .label {
@@ -13,12 +50,27 @@
   font-size: var(--font-size-xs);
   color: var(--muted-foreground);
   font-weight: var(--font-weight-normal);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .value {
   font-family: var(--font-primary);
-  font-size: var(--spacing-2xl);
-  font-weight: var(--font-weight-semibold);
+  font-size: 28px;
+  font-weight: var(--font-weight-bold);
   color: var(--foreground);
   line-height: var(--line-height-tight);
+  letter-spacing: -0.02em;
+}
+
+.iconWrap {
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  color: #FFFFFF;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
