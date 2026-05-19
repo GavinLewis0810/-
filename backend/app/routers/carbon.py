@@ -35,6 +35,14 @@ async def my_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """当前用户的碳足迹统计"""
+    if current_user["role"] == "admin":
+        return CarbonMyStats(
+            total_carbon_kg=0, tree_offset=0, green_points=0,
+            point_sources=[], category_breakdown=[],
+            monthly_trend=[], rank=0, rank_percentile=0,
+            suggestion="管理员不参与碳足迹排名，以下为全公司数据总览",
+        )
+
     since = datetime.now() - timedelta(days=30 * months)
 
     # 获取该用户的所有已确认发票
@@ -130,7 +138,9 @@ async def ranking(
             func.sum(Invoice.carbon_kg).label("total_carbon"),
             func.count(Invoice.id).label("cnt"),
         )
+        .join(User, Invoice.owner_id == User.id)
         .where(Invoice.status.in_(CARBON_STATUSES))
+        .where(User.role != "admin")
         .group_by(Invoice.owner_id)
     )
     result = await db.execute(rank_query)

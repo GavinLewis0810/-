@@ -1,17 +1,21 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
 from app.models.reimbursement import ReimbursementStatus
-from app.schemas.invoice import InvoiceResponse  # 引入发票的schema
+from app.schemas.invoice import InvoiceResponse
+
 
 class ReimbursementCreate(BaseModel):
     title: str = Field(..., description="报销事由")
-    project_code: str = Field(..., description="项目编号（必选）")
-    invoice_ids: List[int] = Field(..., description="要打包报销的发票ID列表")
+    project_code: str = Field(..., description="项目编号")
+    invoice_ids: List[int] = Field(..., description="要打包报销的发票 ID 列表")
     bank_card_id: Optional[int] = Field(None, description="收款银行卡 ID")
     application_id: Optional[int] = Field(None, description="事前申请单 ID")
-    borrowing_id: Optional[int] = Field(None, description="关联借款申请 ID（用于冲销）")
+    borrowing_id: Optional[int] = Field(None, description="关联借款申请 ID")
     reason_category_id: Optional[int] = Field(None, description="事由类别 ID")
+
 
 class ReimbursementResponse(BaseModel):
     id: int
@@ -27,37 +31,35 @@ class ReimbursementResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    # 🚀🚀🚀 核心新增：告诉 FastAPI 允许把 AI 结果发给前端！
     ai_risk_level: Optional[str] = None
     ai_reason: Optional[str] = None
     ai_review_detail: Optional[Dict[str, Any]] = None
     bank_card_id: Optional[int] = None
     application_id: Optional[int] = None
     borrowing_id: Optional[int] = None
-    bank_card_info: Optional[str] = None  # "工商银行 (尾号1234)"
-    reviewer_signature: Optional[str] = None  # 财务总监电子签名
+    bank_card_info: Optional[str] = None
+    reviewer_signature: Optional[str] = None
 
-    # 模拟打款凭证
     payment_transaction_id: Optional[str] = None
     payment_time: Optional[datetime] = None
     payment_bank: Optional[str] = None
 
-    # 返回报销单时，连同底下的发票一起返回
     invoices: Optional[List[InvoiceResponse]] = []
 
     class Config:
         from_attributes = True
 
+
 class CategorySuggestionRequest(BaseModel):
     invoice_ids: List[int] = Field(..., description="选中的发票 ID 列表")
-    application_id: Optional[int] = Field(None, description="关联的申请单 ID（如有）")
+    application_id: Optional[int] = Field(None, description="关联的申请单 ID")
 
 
 class CategorySuggestionResponse(BaseModel):
-    mode: str  # "suggestion" | "application_override"
+    mode: str
     suggested_category_id: Optional[int] = None
     suggested_category_name: Optional[str] = None
-    confidence: float = 0.0  # 匹配发票数 / 总发票数
+    confidence: float = 0.0
     breakdown: List[Dict[str, Any]] = []
     hint: str = ""
 
@@ -65,3 +67,27 @@ class CategorySuggestionResponse(BaseModel):
 class ReimbursementReview(BaseModel):
     action: str = Field(..., description="APPROVE 或 REJECT")
     reject_reason: Optional[str] = None
+
+
+class VoucherReviewFieldUpdate(BaseModel):
+    field_name: str = Field(..., description="需要复核的字段名")
+    source: str = Field(..., description="ocr / llm / custom")
+    value: Optional[str] = Field(None, description="最终采用值；source 为 custom 时必填")
+
+
+class VoucherReviewRequest(BaseModel):
+    review_note: Optional[str] = Field(None, description="管理员复核备注")
+    mark_reviewed: bool = Field(True, description="是否将该票标记为已核对")
+    field_updates: List[VoucherReviewFieldUpdate] = Field(
+        default_factory=list,
+        description="管理员在随单审核中修正的字段",
+    )
+
+
+class VoucherReviewResponse(BaseModel):
+    reimbursement_id: int
+    invoice_id: int
+    reviewed: bool
+    corrected_fields: List[str] = []
+    confirmation_mode: str
+    message: str

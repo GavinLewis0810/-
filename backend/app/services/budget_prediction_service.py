@@ -11,14 +11,23 @@ Markov 负责修正残差波动（状态转移矩阵）
 
 import math
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.reimbursement import Reimbursement, ReimbursementStatus
 from app.models.project import Project
+
+
+def _month_start(dt: datetime) -> datetime:
+    return datetime(dt.year, dt.month, 1)
+
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    year = dt.year + (dt.month - 1 + months) // 12
+    month = (dt.month - 1 + months) % 12 + 1
+    return datetime(year, month, 1)
 
 
 # ──────────────────────────────────────────────
@@ -232,12 +241,10 @@ def _markov_adjust(predictions: list[float], markov: dict, steps: int) -> list[f
     adjusted = []
     state = current
     for val in predictions:
-        # 找到概率最大的下一个状态
         probs = trans_prob[state]
-        next_state = max(range(len(probs)), key=lambda i: probs[i])
-        correction = states[next_state][2]  # midpoint of residual state
+        correction = sum(prob * states[idx][2] for idx, prob in enumerate(probs))
         adjusted.append(val + correction)
-        state = next_state
+        state = max(range(len(probs)), key=lambda i: probs[i])
 
     return adjusted
 
@@ -599,6 +606,342 @@ def _fallback_linear(
         for i in range(1, steps + 1):
             future_dt = last_dt + timedelta(days=30 * i)
             future_amt = last_amt + slope * 30 * i
+            pred_line.append({
+                "date": future_dt.strftime("%Y-%m-%d"),
+                "amount": round(future_amt, 2),
+            })
+            cum_data.append({
+                "date": future_dt.strftime("%Y-%m-%d"),
+                "amount": round(future_amt, 2),
+                "type": "predicted",
+            })
+        base["prediction_line"] = pred_line
+
+    base["cumulative_data"] = cum_data
+    return base
+
+
+def _build_monthly_points_v2(
+    reimbursements: list[Reimbursement],
+    months_back: int,
+) -> tuple[list[tuple[datetime, float]], list[float], float, float]:
+    now = datetime.now()
+    current_month = _month_start(now)
+    window_start = _add_months(current_month, -(months_back - 1))
+    month_keys = [_add_months(window_start, offset) for offset in range(months_back)]
+
+    spent = 0.0
+    prior_spent = 0.0
+    monthly_spend_map = {month.strftime("%Y-%m"): 0.0 for month in month_keys}
+    for reimbursement in reimbursements:
+        amount = float(reimbursement.total_amount or 0)
+        created_at = reimbursement.created_at or now
+        spent += amount
+        month_bucket = _month_start(created_at)
+        if month_bucket < window_start:
+            prior_spent += amount
+            continue
+        key = month_bucket.strftime("%Y-%m")
+        if key in monthly_spend_map:
+            monthly_spend_map[key] += amount
+
+    points: list[tuple[datetime, float]] = []
+    window_cumulative: list[float] = []
+    running_total = prior_spent
+    running_window = 0.0
+    for month in month_keys:
+        month_amount = monthly_spend_map.get(month.strftime("%Y-%m"), 0.0)
+        running_total += month_amount
+        running_window += month_amount
+        points.append((month, running_total))
+        window_cumulative.append(running_window)
+
+    return points, window_cumulative, spent, sum(monthly_spend_map.values())
+
+
+async def _predict_single_project(
+    db: AsyncSession,
+    project: Project,
+    months_back: int,
+    predict_months: int,
+) -> dict:
+    budget = float(project.budget or 0)
+    project_code = project.project_code
+    project_name = project.project_name
+
+    base = {
+        "project_code": project_code,
+        "project_name": project_name,
+        "budget": budget,
+        "spent": 0.0,
+        "remaining": budget,
+        "daily_burn_rate": 0.0,
+        "monthly_burn_rate": 0.0,
+        "predicted_exhaustion_date": None,
+        "days_remaining": None,
+        "status": "normal",
+        "trend": "stable",
+        "r_squared": None,
+        "gm11_quality": None,
+        "model_type": "unknown",
+        "model_label": "未建模",
+        "data_granularity": "monthly_cumulative",
+        "window_months": months_back,
+        "prediction_note": "基于近月累计支出做趋势预警，耗尽日期仅供参考",
+        "cumulative_data": [],
+        "prediction_line": [],
+    }
+
+    if budget <= 0:
+        base["status"] = "insufficient_data"
+        return base
+
+    result = await db.execute(
+        select(Reimbursement)
+        .where(
+            Reimbursement.project_code == project_code,
+            Reimbursement.status.in_([
+                ReimbursementStatus.SUBMITTED,
+                ReimbursementStatus.APPROVED,
+                ReimbursementStatus.COMPLETED,
+            ]),
+        )
+        .order_by(Reimbursement.created_at.asc())
+    )
+    reimbursements = result.scalars().all()
+    if not reimbursements:
+        base["status"] = "insufficient_data"
+        return base
+
+    points, window_cumulative, spent, recent_spent = _build_monthly_points_v2(reimbursements, months_back)
+    remaining = budget - spent
+    base["spent"] = spent
+    base["remaining"] = remaining
+
+    if remaining <= 0:
+        base["status"] = "exhausted"
+        base["days_remaining"] = 0
+        base["predicted_exhaustion_date"] = datetime.now().strftime("%Y-%m-%d")
+        base["cumulative_data"] = [
+            {"date": dt.strftime("%Y-%m-%d"), "amount": round(amt, 2), "type": "actual"}
+            for dt, amt in points
+        ]
+        return base
+
+    model_points = [(dt, amt) for dt, amt in points]
+    while len(model_points) > 1 and model_points[0][1] <= 0:
+        model_points.pop(0)
+
+    cum_values = [amt for _, amt in model_points]
+    active_months = sum(1 for value in window_cumulative if value > 0)
+    if len(cum_values) < 3 or active_months < 2 or not _level_ratio_test(cum_values):
+        return _fallback_linear_v2(points, budget, spent, remaining, recent_spent, base)
+
+    try:
+        gm_result = _gm11_predict(cum_values, predict_steps=predict_months)
+    except (ValueError, ZeroDivisionError):
+        return _fallback_linear_v2(points, budget, spent, remaining, recent_spent, base)
+
+    residuals = gm_result["residuals"]
+    markov = _build_markov_correction(residuals)
+    adjusted_predicted = (
+        _markov_adjust(gm_result["predicted"], markov, predict_months)
+        if markov.get("states")
+        else gm_result["predicted"]
+    )
+    positive_predicted = [value for value in adjusted_predicted if value > 0]
+    model_monthly = (
+        sum(positive_predicted[:min(6, len(positive_predicted))]) / min(6, len(positive_predicted))
+        if positive_predicted
+        else 0.0
+    )
+
+    if len(model_points) >= 2:
+        first_date, last_date = model_points[0][0], model_points[-1][0]
+        total_days_span = (last_date - first_date).days
+    else:
+        total_days_span = 0
+
+    if total_days_span > 0 and recent_spent > 0:
+        historical_daily = recent_spent / total_days_span
+        historical_monthly = historical_daily * 30.42
+    else:
+        historical_daily = 0.0
+        historical_monthly = 0.0
+
+    if model_monthly > 0 and model_monthly >= historical_monthly * 0.3:
+        avg_monthly = model_monthly
+    elif historical_monthly > 0:
+        avg_monthly = historical_monthly
+    else:
+        avg_monthly = 0.0
+
+    daily_burn = avg_monthly / 30.42 if avg_monthly > 0 else 0.0
+    base["daily_burn_rate"] = round(daily_burn, 2)
+    base["monthly_burn_rate"] = round(avg_monthly, 2)
+    base["gm11_quality"] = round(gm_result["avg_rel_error"], 2)
+    base["r_squared"] = None
+    base["model_type"] = "gm_markov"
+    base["model_label"] = "GM(1,1)+Markov（月累计）"
+
+    exhaustion_date = None
+    days_remaining = None
+    pred_line = []
+    if daily_burn <= 0.01:
+        base["status"] = "normal"
+        base["trend"] = "stable"
+        base["days_remaining"] = 9999
+        base["predicted_exhaustion_date"] = "短期内不会耗尽"
+    else:
+        last_date = points[-1][0]
+        found = False
+        for index, increment in enumerate(adjusted_predicted):
+            if increment <= 0:
+                continue
+            month_date = _add_months(last_date, index + 1)
+            cumulative_predicted = spent + sum(adjusted_predicted[:index + 1])
+            previous_cumulative = spent + sum(adjusted_predicted[:index]) if index > 0 else spent
+            display_cumulative = max(cumulative_predicted, previous_cumulative + 0.01)
+            pred_line.append({
+                "date": month_date.strftime("%Y-%m-%d"),
+                "amount": round(display_cumulative, 2),
+            })
+            if not found and display_cumulative >= budget:
+                exhaustion_date = month_date
+                days_remaining = (exhaustion_date - datetime.now()).days
+                found = True
+
+        if not found and adjusted_predicted:
+            if daily_burn > 0.001:
+                total_days = int(remaining / daily_burn)
+                exhaustion_date = datetime.now() + timedelta(days=total_days)
+                days_remaining = total_days
+            else:
+                days_remaining = 9999
+
+        base["days_remaining"] = days_remaining
+        base["predicted_exhaustion_date"] = (
+            exhaustion_date.strftime("%Y-%m-%d") if exhaustion_date else "短期内不会耗尽"
+        )
+        base["prediction_line"] = pred_line
+        if days_remaining is not None:
+            if days_remaining <= 0:
+                base["status"] = "exhausted"
+            elif days_remaining <= 30:
+                base["status"] = "critical"
+            elif days_remaining <= 90:
+                base["status"] = "warning"
+            else:
+                base["status"] = "normal"
+
+    a = gm_result.get("a", 0)
+    if a > 0.01:
+        base["trend"] = "increasing"
+    elif a < -0.01:
+        base["trend"] = "decreasing"
+    else:
+        base["trend"] = "stable"
+
+    base["cumulative_data"] = [
+        {"date": dt.strftime("%Y-%m-%d"), "amount": round(amt, 2), "type": "actual"}
+        for dt, amt in points
+    ] + [
+        {"date": point["date"], "amount": round(point["amount"], 2), "type": "predicted"}
+        for point in pred_line
+    ]
+    return base
+
+
+def _fallback_linear_v2(
+    points: list[tuple[datetime, float]],
+    budget: float,
+    spent: float,
+    remaining: float,
+    recent_spent: float,
+    base: dict,
+) -> dict:
+    if len(points) < 2:
+        base["status"] = "insufficient_data"
+        base["model_type"] = "insufficient"
+        base["model_label"] = "数据不足"
+        base["cumulative_data"] = [
+            {"date": dt.strftime("%Y-%m-%d"), "amount": round(amt, 2), "type": "actual"}
+            for dt, amt in points
+        ]
+        return base
+
+    x_vals = [(dt - points[0][0]).days for dt, _ in points]
+    y_vals = [amt for _, amt in points]
+    n_pts = len(x_vals)
+    sum_x = sum(x_vals)
+    sum_y = sum(y_vals)
+    sum_xy = sum(x * y for x, y in zip(x_vals, y_vals))
+    sum_x2 = sum(x * x for x in x_vals)
+    denom = n_pts * sum_x2 - sum_x * sum_x
+    slope = 0.0 if abs(denom) < 1e-12 else (n_pts * sum_xy - sum_x * sum_y) / denom
+
+    y_mean = sum_y / n_pts
+    intercept = (sum_y - slope * sum_x) / n_pts
+    ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(x_vals, y_vals))
+    ss_tot = sum((y - y_mean) ** 2 for y in y_vals)
+    r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+
+    total_days_span = (points[-1][0] - points[0][0]).days if len(points) >= 2 else 0
+    if total_days_span > 0 and recent_spent > 0:
+        historical_daily = recent_spent / total_days_span
+    else:
+        historical_daily = 0.0
+
+    if slope > 0.01:
+        daily_burn = slope
+    elif historical_daily > 0:
+        daily_burn = historical_daily
+    else:
+        daily_burn = 0.001
+    monthly_burn = daily_burn * 30.42
+
+    base["daily_burn_rate"] = round(daily_burn, 2)
+    base["monthly_burn_rate"] = round(monthly_burn, 2)
+    base["r_squared"] = round(r2, 4)
+    base["model_type"] = "linear_fallback"
+    base["model_label"] = "线性趋势估算（月累计）"
+
+    if slope > 0.01:
+        base["trend"] = "increasing"
+    elif slope < -0.01:
+        base["trend"] = "decreasing"
+    else:
+        base["trend"] = "stable"
+
+    if remaining <= 0:
+        base["status"] = "exhausted"
+        base["days_remaining"] = 0
+        base["predicted_exhaustion_date"] = datetime.now().strftime("%Y-%m-%d")
+    else:
+        days = int(remaining / daily_burn) if daily_burn > 0 else 9999
+        base["days_remaining"] = days
+        if days <= 30:
+            base["status"] = "critical"
+        elif days <= 90:
+            base["status"] = "warning"
+        else:
+            base["status"] = "normal"
+        base["predicted_exhaustion_date"] = (
+            (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+            if days < 9999
+            else "短期内不会耗尽"
+        )
+
+    cum_data = [
+        {"date": dt.strftime("%Y-%m-%d"), "amount": round(amt, 2), "type": "actual"}
+        for dt, amt in points
+    ]
+    if slope > 0 and remaining > 0 and points:
+        last_dt, last_amt = points[-1]
+        pred_line = []
+        for step in range(1, 13):
+            future_dt = _add_months(last_dt, step)
+            future_amt = last_amt + monthly_burn * step
             pred_line.append({
                 "date": future_dt.strftime("%Y-%m-%d"),
                 "amount": round(future_amt, 2),

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  Card, Row, Col, Descriptions, Input, Select, Button, message, Spin,
+  Card, Row, Col, Descriptions, Input, Select, Button, message,
   Divider, Modal, Avatar, Space,
 } from 'antd';
 import {
@@ -143,7 +143,7 @@ export default function ProfilePage({ currentUser, onUserUpdate }: Props) {
     try {
       const res = await updateProfile({
         full_name: fullName,
-        department: department || null,
+        department: department || undefined,
       });
       onUserUpdate(res.user);
       message.success('个人信息已更新');

@@ -23,7 +23,7 @@ export default function PaymentVoucher({ reimb, payment }: Props) {
     const txId = payment?.transaction_id || reimb.payment_transaction_id;
   const payBank = payment?.to_bank || reimb.payment_bank;
   const toAccount = payment?.to_account || (reimb.payment_bank ? '****' + '****' : '****');
-  const payTime = payment?.transfer_time_str || payment?.transfer_time || reimb.payment_time;
+  const payTime = payment?.transfer_time || reimb.payment_time;
   const arrivalTime = payment?.estimated_arrival || '';
   const payee = payment?.payee_name || reimb.submitter || '';
   const batchNo = payment?.batch_no || '';

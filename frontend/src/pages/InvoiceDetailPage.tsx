@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Descriptions,
@@ -13,6 +13,9 @@ import {
   Table,
   Card,
   Tooltip,
+  Space,
+  Alert,
+  Tag,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -30,9 +33,15 @@ import {
   EyeOutlined,
   FileImageOutlined,
   SoundOutlined,
+  UpOutlined,
+  DownOutlined,
+  ZoomInOutlined,
+  ZoomOutOutlined,
+  ColumnWidthOutlined,
+  ExpandOutlined,
 } from '@ant-design/icons';
-import { getInvoice, getInvoiceFileUrl, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice, saveGroundTruth } from '../services/api';
-import type { InvoiceDetail } from '../types/invoice';
+import { getInvoice, getInvoiceFileUrl, resolveDiff, confirmInvoice, reprocessInvoice, verifyInvoice, saveGroundTruth, applySubjectReview } from '../services/api';
+import type { InvoiceDetail, SubjectReviewScheme, SubjectReviewTrace, SubjectReviewApplyResponse } from '../types/invoice';
 import StatusTag from '../components/StatusTag';
 import styles from './InvoiceDetailPage.module.css';
 
@@ -48,6 +57,19 @@ const fieldLabels: Record<string, string> = {
   tax_rate: '税率',
   tax_amount: '总税额',
 };
+
+const subjectFields = ['buyer_name', 'buyer_tax_id', 'seller_name', 'seller_tax_id'] as const;
+
+function getSubjectRiskTag(level?: string) {
+  if (level === 'high') return <StatusTag status="error">高风险待人工复核</StatusTag>;
+  if (level === 'medium') return <StatusTag status="warning">中风险建议确认</StatusTag>;
+  return <StatusTag status="success">主体信息已自动通过</StatusTag>;
+}
+
+function findSubjectScheme(subjectReview: SubjectReviewTrace | null | undefined, key?: string | null) {
+  if (!subjectReview || !key) return null;
+  return subjectReview.candidate_schemes?.find((item) => item.key === key) || null;
+}
 
 // 💡 商品明细表格的列定义
 const itemColumns = [
@@ -115,11 +137,21 @@ function InvoiceDetailPage() {
   const [customValue, setCustomValue] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ valid: boolean; message: string; stored_hash: string; current_hash: string } | null>(null);
+  const [subjectApplying, setSubjectApplying] = useState<string | null>(null);
+  const [schemesExpanded, setSchemesExpanded] = useState(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewZoom, setReviewZoom] = useState(1);
+  const [reviewFit, setReviewFit] = useState<'width' | 'real'>('width');
+  const [reviewPos, setReviewPos] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
   // 真值标注
   const [gtModalOpen, setGtModalOpen] = useState(false);
   const [gtFields, setGtFields] = useState<Record<string, string>>({});
   const [savingGt, setSavingGt] = useState(false);
+  const [manualSubjectModalOpen, setManualSubjectModalOpen] = useState(false);
+  const [manualSubjectFields, setManualSubjectFields] = useState<Record<string, string>>({});
 
   const handleVerify = async () => {
     if (!id) return;
@@ -221,6 +253,11 @@ function InvoiceDetailPage() {
   const handleConfirmAll = async () => {
     if (!id || !invoice) return;
 
+    if (subjectReview && !subjectApplied) {
+      message.warning('请先在上方“主体信息复核”中确认买方/卖方信息，再提交整票确认。');
+      return;
+    }
+
     // 计算哪些字段被用户修改过（对比当前 form 值和 invoice 原始值）
     const corrections: Record<string, string> = {};
     const states = invoice.field_states || {};
@@ -239,10 +276,11 @@ function InvoiceDetailPage() {
 
     try {
       const res = await confirmInvoice(parseInt(id), corrections);
-      if (res.has_corrections) {
-        message.warning(res.message);
+      const label = res.next_status_label ? ` -> ${res.next_status_label}` : '';
+      if (res.confirmation_mode === 'USER_EDIT' || res.confirmation_mode === 'USER_SELECTION') {
+        message.warning(`${res.message}${label}`);
       } else {
-        message.success(res.message);
+        message.success(`${res.message}${label}`);
       }
       fetchInvoice();
     } catch (error: unknown) {
@@ -279,6 +317,56 @@ function InvoiceDetailPage() {
     }
   };
 
+  const applySubjectScheme = async (scheme: SubjectReviewScheme | null) => {
+    if (!id || !scheme) return;
+    setSubjectApplying(scheme.key);
+    try {
+      const res: SubjectReviewApplyResponse = await applySubjectReview(parseInt(id, 10), { scheme_key: scheme.key });
+      message.success(res.message || `已应用：${scheme.display_label || scheme.label}`);
+      await fetchInvoice();
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '主体方案应用失败');
+    } finally {
+      setSubjectApplying(null);
+    }
+  };
+
+  const openManualSubjectModal = () => {
+    const initialFields: Record<string, string> = {};
+    subjectFields.forEach((field) => {
+      const current = (invoice as any)?.[field];
+      const recommended = recommendedScheme?.fields?.[field];
+      initialFields[field] = String(current ?? recommended ?? '');
+    });
+    setManualSubjectFields(initialFields);
+    setManualSubjectModalOpen(true);
+  };
+
+  const applyManualSubject = async () => {
+    if (!id) return;
+    setSubjectApplying('manual');
+    try {
+      const payload: Record<string, string> = {};
+      subjectFields.forEach((field) => {
+        payload[field] = manualSubjectFields[field] ?? '';
+      });
+      const res: SubjectReviewApplyResponse = await applySubjectReview(parseInt(id, 10), { mode: 'manual', fields: payload });
+      message.success(res.message || '主体信息已手动修正');
+      setManualSubjectModalOpen(false);
+      await fetchInvoice();
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '手动修正提交失败');
+    } finally {
+      setSubjectApplying(null);
+    }
+  };
+
+  const resetReviewViewport = () => {
+    setReviewZoom(1);
+    setReviewFit('width');
+    setReviewPos({ x: 0, y: 0 });
+  };
+
   if (loading) {
     return (
       <div className={styles.loadingContainer}>
@@ -294,6 +382,14 @@ function InvoiceDetailPage() {
   const hasLlm = Boolean(invoice.llm_result);
   const hasDiffs = Boolean(invoice.parsing_diffs && invoice.parsing_diffs.length > 0);
   const hasUnresolvedDiffs = Boolean(invoice.parsing_diffs && invoice.parsing_diffs.some(d => !d.resolved));
+
+  const subjectReview = (invoice.decision_trace?.subject_review || null) as SubjectReviewTrace | null;
+  const subjectApplied = subjectReview?.applied === true;
+  const subjectDiffs = (invoice.parsing_diffs || []).filter((diff) => subjectFields.includes(diff.field_name as typeof subjectFields[number]));
+  const subjectNeedsManualReview = Boolean(subjectReview?.manual_review_required);
+  const recommendedScheme = findSubjectScheme(subjectReview, subjectReview?.recommended_scheme_key);
+  const nonSubjectDiffs = invoice.parsing_diffs?.filter((diff) => !subjectFields.includes(diff.field_name as typeof subjectFields[number])) || [];
+  const nonSubjectPending = nonSubjectDiffs.filter((diff) => !diff.resolved).length;
 
   const matchCount = invoice.parsing_diffs?.filter(d => d.resolved).length || 0;
   const totalCount = invoice.parsing_diffs?.length || 0;
@@ -322,15 +418,17 @@ function InvoiceDetailPage() {
           <button
             className={styles.confirmButton}
             onClick={handleConfirmAll}
-            disabled={invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审'}
+            disabled={invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审' || invoice.status === '待随单审核' || Boolean(subjectReview && !subjectApplied)}
             style={{
-              opacity: (invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审') ? 0.5 : 1,
-              cursor: (invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审') ? 'not-allowed' : 'pointer'
+              opacity: (invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审' || invoice.status === '待随单审核' || Boolean(subjectReview && !subjectApplied)) ? 0.5 : 1,
+              cursor: (invoice.status === '已确认' || invoice.status === '已报销' || invoice.status === '待重审' || invoice.status === '待随单审核' || Boolean(subjectReview && !subjectApplied)) ? 'not-allowed' : 'pointer'
             }}
           >
             {invoice.status === '已确认' ? '已确认'
               : invoice.status === '待重审' ? '待管理员复核'
+              : invoice.status === '待随单审核' ? '待随单审核'
               : invoice.status === '已报销' ? '已报销'
+              : Boolean(subjectReview && !subjectApplied) ? '请先完成主体信息复核'
               : '提交确认'}
           </button>
           <button
@@ -345,6 +443,153 @@ function InvoiceDetailPage() {
 
       <div className={styles.contentBody}>
         <div className={styles.leftPanel}>
+          {subjectReview && subjectDiffs.length > 0 && (
+            <div className={styles.subjectReviewCard}>
+              <div className={styles.subjectReviewHeader}>
+                <div>
+                  <div className={styles.subjectReviewTitle}>主体信息复核（买方/卖方）</div>
+                  <div className={styles.subjectReviewSubtitle}>
+                    {subjectReview.action_hint || '请对照原票确认主体信息，主体字段会在这里统一处理，下方表格继续处理其他字段。'}
+                  </div>
+                </div>
+                {getSubjectRiskTag(subjectReview.risk_level)}
+              </div>
+
+              <div className={styles.subjectReviewBody}>
+                {subjectReview.primary_message && (
+                  <Alert
+                    type={subjectNeedsManualReview ? 'warning' : 'info'}
+                    showIcon
+                    message={subjectReview.primary_message}
+                  />
+                )}
+
+                <div className={styles.subjectReviewSummary}>
+                  <div className={styles.subjectSummaryItem}>
+                    <span>推荐方案</span>
+                    <strong>{recommendedScheme?.display_label || subjectReview.recommended_scheme_label || '系统推荐'}</strong>
+                  </div>
+                  <div className={styles.subjectSummaryItem}>
+                    <span>推荐得分</span>
+                    <strong>{(subjectReview.recommended_score * 100).toFixed(0)}%</strong>
+                  </div>
+                  <div className={styles.subjectSummaryItem}>
+                    <span>方案分差</span>
+                    <strong>{(subjectReview.score_gap * 100).toFixed(0)}%</strong>
+                  </div>
+                </div>
+
+                {subjectReview.risk_reasons && subjectReview.risk_reasons.length > 0 && (
+                  <div className={styles.subjectRiskList}>
+                    {subjectReview.risk_reasons.map((reason, index) => (
+                      <div key={`${reason}-${index}`} className={styles.subjectRiskItem}>
+                        <WarningOutlined />
+                        <span>{reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {recommendedScheme && (
+                  <div className={styles.subjectSchemePreview}>
+                    {subjectFields.map((field) => (
+                      <div key={field} className={styles.subjectPreviewCell}>
+                        <span>{fieldLabels[field]}</span>
+                        <strong>{recommendedScheme.fields[field] || '-'}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className={styles.subjectActionRow}>
+                  <Button
+                    type="primary"
+                    loading={subjectApplying === (recommendedScheme?.key || 'recommended')}
+                    onClick={() => applySubjectScheme(recommendedScheme)}
+                  >
+                    采纳建议并继续
+                  </Button>
+                  <Button onClick={openManualSubjectModal}>
+                    手动修正主体信息
+                  </Button>
+                  <Button
+                    icon={<ExpandOutlined />}
+                    onClick={() => {
+                      resetReviewViewport();
+                      setReviewModalOpen(true);
+                    }}
+                  >
+                    查看原票（放大）
+                  </Button>
+                  <Button
+                    type="link"
+                    icon={schemesExpanded ? <UpOutlined /> : <DownOutlined />}
+                    onClick={() => setSchemesExpanded((prev) => !prev)}
+                  >
+                    {schemesExpanded ? '收起备选方案' : '查看备选方案（高级）'}
+                  </Button>
+                </div>
+
+                <div className={styles.subjectHint}>
+                  {subjectApplied
+                    ? '主体信息已确认，下方表格中的主体字段只显示结果，其他字段仍需继续确认。'
+                    : '先在这里确认买方/卖方主体，再去下方继续处理非主体字段。'}
+                </div>
+
+                {schemesExpanded && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {subjectReview.candidate_schemes?.map((scheme) => {
+                      const isRecommended = scheme.key === subjectReview.recommended_scheme_key;
+                      return (
+                        <Card
+                          key={scheme.key}
+                          size="small"
+                          style={{ borderColor: isRecommended ? '#1677ff' : undefined }}
+                          title={
+                            <Space>
+                              <span>{scheme.display_label || scheme.label}</span>
+                              {isRecommended && <Tag color="blue">推荐</Tag>}
+                            </Space>
+                          }
+                          extra={
+                            <Space size="small">
+                              <span style={{ fontSize: 12, color: '#888' }}>可信度 {(scheme.score * 100).toFixed(0)}%</span>
+                              {!isRecommended && (
+                                <span style={{ fontSize: 12, color: '#d48806' }}>
+                                  与推荐差距 {((subjectReview.recommended_score - scheme.score) * 100).toFixed(0)}%
+                                </span>
+                              )}
+                            </Space>
+                          }
+                        >
+                          <div className={styles.subjectSchemePreview}>
+                            {subjectFields.map((field) => (
+                              <div key={`${scheme.key}-${field}`} className={styles.subjectPreviewCell}>
+                                <span>{fieldLabels[field]}</span>
+                                <strong>{scheme.fields[field] || '-'}</strong>
+                              </div>
+                            ))}
+                          </div>
+                          {!isRecommended && (
+                            <div style={{ marginTop: 12 }}>
+                              <Button
+                                type="link"
+                                loading={subjectApplying === scheme.key}
+                                onClick={() => applySubjectScheme(scheme)}
+                              >
+                                采用此方案
+                              </Button>
+                            </div>
+                          )}
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className={styles.card}>
             <div className={styles.cardHeader}>
               <div className={styles.cardTitle}>
@@ -530,7 +775,9 @@ function InvoiceDetailPage() {
                 )}
                 {hasLlm && hasUnresolvedDiffs && (
                   <StatusTag status="warning">
-                    {totalCount - matchCount}/{totalCount} 待确认
+                    {subjectReview && !subjectApplied
+                      ? `主体信息待确认 1 组，其他字段待确认 ${nonSubjectPending} 项`
+                      : `${totalCount - matchCount}/${totalCount} 待确认`}
                   </StatusTag>
                 )}
                 {hasLlm && hasDiffs && !hasUnresolvedDiffs && (
@@ -581,6 +828,7 @@ function InvoiceDetailPage() {
                     {invoice.parsing_diffs?.map((diff) => {
                       const isMatch = diff.ocr_value === diff.llm_value;
                       const isLowConf = diff.confidence != null && diff.confidence < 0.8;
+                      const isSubjectField = subjectFields.includes(diff.field_name as typeof subjectFields[number]);
                       return (
                         <tr
                           key={diff.id}
@@ -642,7 +890,15 @@ function InvoiceDetailPage() {
                             )}
                           </td>
                           <td>
-                            {!diff.resolved && !isMatch && (
+                            {isSubjectField ? (
+                              subjectApplied ? (
+                                <StatusTag status="success">
+                                  已由主体信息复核确认{subjectReview?.applied_scheme_display_label ? `（${subjectReview.applied_scheme_display_label}）` : ''}
+                                </StatusTag>
+                              ) : (
+                                <span style={{ color: '#d48806', fontSize: 12 }}>请先在上方主体信息复核中确认</span>
+                              )
+                            ) : !diff.resolved && !isMatch ? (
                               <div style={{ display: 'flex', gap: '8px' }}>
                                 <Button
                                   type="link"
@@ -671,11 +927,9 @@ function InvoiceDetailPage() {
                                   自定义
                                 </Button>
                               </div>
-                            )}
-                            {diff.resolved && (
+                            ) : diff.resolved ? (
                               <StatusTag status="success">已解决</StatusTag>
-                            )}
-                            {isMatch && !diff.resolved && (
+                            ) : isMatch && !diff.resolved ? (
                               <Button
                                 type="link"
                                 size="small"
@@ -683,7 +937,7 @@ function InvoiceDetailPage() {
                               >
                                 确认
                               </Button>
-                            )}
+                            ) : null}
                           </td>
                         </tr>
                       );
@@ -839,6 +1093,113 @@ function InvoiceDetailPage() {
           )}
 
           <Modal
+            title="放大核对原票"
+            open={reviewModalOpen}
+            onCancel={() => {
+              setReviewModalOpen(false);
+              setIsDragging(false);
+            }}
+            footer={null}
+            width="92vw"
+            style={{ top: 24 }}
+          >
+            <div style={{ display: 'flex', gap: 16, height: '78vh' }}>
+              <div style={{ flex: 1, border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden', background: '#fafafa', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: 12, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Space wrap>
+                    <Button icon={<ZoomOutOutlined />} onClick={() => setReviewZoom((z) => Math.max(0.5, Number((z - 0.1).toFixed(2))))}>缩小</Button>
+                    <Button icon={<ZoomInOutlined />} onClick={() => setReviewZoom((z) => Math.min(3, Number((z + 0.1).toFixed(2))))}>放大</Button>
+                    <Button icon={<ColumnWidthOutlined />} onClick={() => { setReviewFit('width'); setReviewZoom(1); setReviewPos({ x: 0, y: 0 }); }}>适配宽度</Button>
+                    <Button icon={<ExpandOutlined />} onClick={() => { setReviewFit('real'); setReviewZoom(1); setReviewPos({ x: 0, y: 0 }); }}>1:1</Button>
+                  </Space>
+                  <span style={{ fontSize: 12, color: '#999' }}>拖拽图片可平移查看</span>
+                </div>
+                <div
+                  style={{ flex: 1, overflow: 'auto', position: 'relative', cursor: isDragging ? 'grabbing' : 'grab' }}
+                  onMouseMove={(event) => {
+                    if (!isDragging) return;
+                    setReviewPos((prev) => ({
+                      x: prev.x + event.clientX - dragStart.x,
+                      y: prev.y + event.clientY - dragStart.y,
+                    }));
+                    setDragStart({ x: event.clientX, y: event.clientY });
+                  }}
+                  onMouseUp={() => setIsDragging(false)}
+                  onMouseLeave={() => setIsDragging(false)}
+                >
+                  {invoice.file_type === 'pdf' ? (
+                    <iframe
+                      src={getInvoiceFileUrl(invoice.id)}
+                      style={{ width: '100%', height: '100%', border: 'none' }}
+                      title="PDF Review"
+                    />
+                  ) : (
+                    <img
+                      src={getInvoiceFileUrl(invoice.id)}
+                      alt="Invoice Review"
+                      onMouseDown={(event) => {
+                        setIsDragging(true);
+                        setDragStart({ x: event.clientX, y: event.clientY });
+                      }}
+                      style={{
+                        width: reviewFit === 'width' ? `${reviewZoom * 100}%` : 'auto',
+                        maxWidth: reviewFit === 'width' ? 'none' : 'unset',
+                        height: 'auto',
+                        transform: `translate(${reviewPos.x}px, ${reviewPos.y}px) scale(${reviewFit === 'real' ? reviewZoom : 1})`,
+                        transformOrigin: 'top left',
+                        userSelect: 'none',
+                        display: 'block',
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div style={{ width: 320, border: '1px solid #f0f0f0', borderRadius: 8, padding: 16, overflow: 'auto' }}>
+                <h4 style={{ marginTop: 0 }}>当前主体信息</h4>
+                <div style={{ marginBottom: 12, fontSize: 12, color: '#999' }}>
+                  来源：{recommendedScheme?.display_label || subjectReview?.recommended_scheme_label || '系统推荐'}
+                </div>
+                {subjectFields.map((field) => (
+                  <div key={field} style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>{fieldLabels[field]}</div>
+                    <div style={{ fontWeight: 600 }}>{recommendedScheme?.fields[field] || (invoice as any)[field] || '-'}</div>
+                  </div>
+                ))}
+                <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
+                  <Button type="primary" block loading={subjectApplying === (recommendedScheme?.key || 'recommended')} onClick={() => applySubjectScheme(recommendedScheme)}>
+                    采纳建议并继续
+                  </Button>
+                  <Button block onClick={openManualSubjectModal}>手动修正主体信息</Button>
+                </Space>
+              </div>
+            </div>
+          </Modal>
+
+          <Modal
+            title="手动修正主体信息"
+            open={manualSubjectModalOpen}
+            onOk={applyManualSubject}
+            confirmLoading={subjectApplying === 'manual'}
+            onCancel={() => setManualSubjectModalOpen(false)}
+            okText="提交主体修正"
+            cancelText="取消"
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+              {subjectFields.map((field) => (
+                <div key={field}>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>{fieldLabels[field]}</div>
+                  <Input
+                    value={manualSubjectFields[field] || ''}
+                    onChange={(event) => setManualSubjectFields((prev) => ({ ...prev, [field]: event.target.value }))}
+                    placeholder={`请输入${fieldLabels[field]}`}
+                  />
+                </div>
+              ))}
+            </div>
+          </Modal>
+
+          <Modal
             title={`自定义值 - ${fieldLabels[customValueModal.fieldName] || customValueModal.fieldName}`}
             open={customValueModal.visible}
             onOk={handleCustomValueSubmit}
@@ -893,6 +1254,17 @@ function InvoiceDetailPage() {
             <div className={styles.previewHeader}>
               <span className={styles.previewTitle}>原始文件</span>
               <div className={styles.previewControls}>
+                <button
+                  type="button"
+                  className={styles.downloadButton}
+                  onClick={() => {
+                    resetReviewViewport();
+                    setReviewModalOpen(true);
+                  }}
+                >
+                  <ExpandOutlined />
+                  放大核对
+                </button>
                 <a
                   href={getInvoiceFileUrl(invoice.id)}
                   download

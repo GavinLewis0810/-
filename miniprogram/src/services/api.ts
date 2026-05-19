@@ -102,7 +102,15 @@ export const getInvoice = async (id: number): Promise<Invoice> => {
 };
 
 export const confirmInvoice = async (invoiceId: number, corrections: Record<string, string> = {}): Promise<{
-  invoice_id: number; status: string; has_corrections: boolean; corrected_fields: string[]; message: string;
+  invoice_id: number;
+  status: string;
+  has_corrections: boolean;
+  corrected_fields: string[];
+  confirmation_mode: 'AUTO' | 'USER_SELECTION' | 'USER_EDIT';
+  risk_level: 'low' | 'medium' | 'high';
+  requires_voucher_review: boolean;
+  selection_fields: string[];
+  message: string;
 }> => {
   return request(`/invoices/${invoiceId}/confirm`, { method: 'POST', data: { corrections } });
 };

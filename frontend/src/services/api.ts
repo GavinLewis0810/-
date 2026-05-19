@@ -7,6 +7,8 @@ import type {
   UploadResponse,
   UserProfile,
   EvalAccuracy,
+  FusionExperimentResponse,
+  WorkflowMetricsResponse,
 } from '../types/invoice';
 
 import type { Reimbursement, ReimbursementCreate } from '../types/invoice';
@@ -134,6 +136,16 @@ export const getEvalAccuracy = async (): Promise<EvalAccuracy> => {
   return response.data;
 };
 
+export const getFusionExperiment = async (): Promise<FusionExperimentResponse> => {
+  const response = await api.get('/invoices/eval/fusion-experiment');
+  return response.data;
+};
+
+export const getWorkflowMetrics = async (): Promise<WorkflowMetricsResponse> => {
+  const response = await api.get('/invoices/eval/workflow');
+  return response.data;
+};
+
 // Get invoice file URL
 export const getInvoiceFileUrl = (id: number): string => {
   return `/api/invoices/${id}/file`;
@@ -216,8 +228,31 @@ export const resolveDiff = async (
 export const confirmInvoice = async (
   invoiceId: number,
   corrections: Record<string, string> = {},
-): Promise<{ invoice_id: number; status: string; has_corrections: boolean; corrected_fields: string[]; message: string }> => {
+): Promise<{
+  invoice_id: number;
+  status: string;
+  has_corrections: boolean;
+  corrected_fields: string[];
+  confirmation_mode: 'AUTO' | 'USER_SELECTION' | 'USER_EDIT';
+  risk_level: 'low' | 'medium' | 'high';
+  requires_voucher_review: boolean;
+  selection_fields: string[];
+  next_status_label?: string;
+  message: string;
+}> => {
   const response = await api.post(`/invoices/${invoiceId}/confirm`, { corrections });
+  return response.data;
+};
+
+// Subject review: apply a scheme or manual fields in one call
+export const applySubjectReview = async (
+  invoiceId: number,
+  payload: { scheme_key?: string; mode?: string; fields?: Record<string, string> }
+): Promise<import('../types/invoice').SubjectReviewApplyResponse> => {
+  const response = await api.post(
+    `/invoices/${invoiceId}/subject-review/apply`,
+    payload
+  );
   return response.data;
 };
 
@@ -703,4 +738,3 @@ export const getObservabilityStats = async (): Promise<ObservabilityStats> => {
   const response = await api.get('/observability/stats');
   return response.data;
 };
-

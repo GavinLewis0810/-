@@ -20,7 +20,7 @@ const FIELD_LIST: { field: string; label: string; isMono?: boolean; isAmount?: b
 
 const statusClassMap: Record<string, string> = {
   '已上传': 'upl', '解析中': 'proc', '待处理': 'pend',
-  '已确认': 'conf', '已报销': 'reim', '待确认': 'pend', '待重审': 'warn',
+  '已确认': 'conf', '已报销': 'reim', '待确认': 'pend', '待重审': 'warn', '待随单审核': 'warn',
 };
 
 export default function InvoiceDetailPage() {
@@ -89,10 +89,16 @@ export default function InvoiceDetailPage() {
         }
       }
       const res = await confirmInvoice(Number(id), corrections);
-      if (res.has_corrections) {
+      if (res.confirmation_mode === 'USER_EDIT') {
         Taro.showModal({
           title: '已提交',
           content: `修改了 ${res.corrected_fields.length} 个字段，已转管理员复核。`,
+          showCancel: false,
+        });
+      } else if (res.confirmation_mode === 'USER_SELECTION') {
+        Taro.showModal({
+          title: '已提交',
+          content: `包含 OCR/LLM/自定义人工选择，状态已进入“待随单审核”。`,
           showCancel: false,
         });
       } else {

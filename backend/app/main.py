@@ -168,6 +168,14 @@ async def startup():
             # 发票确认流程：字段级状态快照与用户修正记录
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS field_states JSONB",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS user_corrections JSONB",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS confirmation_mode VARCHAR(32)",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS decision_trace JSONB",
+            "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS selection_fields JSONB",
+            "ALTER TABLE parsing_diffs ADD COLUMN IF NOT EXISTS machine_value TEXT",
+            "ALTER TABLE parsing_diffs ADD COLUMN IF NOT EXISTS machine_source VARCHAR(20)",
+            "ALTER TABLE parsing_diffs ADD COLUMN IF NOT EXISTS machine_confidence NUMERIC(4,2)",
+            "ALTER TABLE parsing_diffs ADD COLUMN IF NOT EXISTS decision_rule_type VARCHAR(40)",
+            "ALTER TABLE parsing_diffs ADD COLUMN IF NOT EXISTS decision_reason JSONB",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS carbon_kg NUMERIC(10,4)",
             "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)",
             "ALTER TABLE reimbursements ADD COLUMN IF NOT EXISTS submitter_id INTEGER REFERENCES users(id)",
@@ -215,6 +223,40 @@ async def startup():
                 await conn.execute(text(sql))
             except Exception:
                 pass
+
+        # PostgreSQL enum evolution for newly introduced invoice status.
+        # Different environments may have different enum type names depending on
+        # historical migrations, so we discover matching enum types dynamically.
+        try:
+            enum_rows = await conn.execute(text(
+                """
+                SELECT t.typname
+                FROM pg_type t
+                JOIN pg_enum e ON e.enumtypid = t.oid
+                WHERE e.enumlabel IN (
+                    'REVIEWING', 'CONFIRMED', 'PENDING_RECHECK', 'REIMBURSED',
+                    '待确认', '已确认', '待重审', '已报销'
+                )
+                GROUP BY t.typname
+                """
+            ))
+            enum_names = [row[0] for row in enum_rows.fetchall()]
+
+            for enum_name in enum_names:
+                try:
+                    await conn.execute(text(
+                        f"ALTER TYPE {enum_name} ADD VALUE IF NOT EXISTS 'PENDING_VOUCHER_REVIEW'"
+                    ))
+                except Exception:
+                    pass
+                try:
+                    await conn.execute(text(
+                        f"ALTER TYPE {enum_name} ADD VALUE IF NOT EXISTS '待随单审核'"
+                    ))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # --- 数据迁移：旧字符串列 → 新外键列 ---
         data_migration_sqls = [

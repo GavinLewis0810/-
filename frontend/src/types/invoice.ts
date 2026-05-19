@@ -4,6 +4,7 @@ export enum InvoiceStatus {
   PENDING = '待处理',
   REVIEWING = '待确认',
   CONFIRMED = '已确认',
+  PENDING_VOUCHER_REVIEW = '待随单审核',
   PENDING_RECHECK = '待重审',
   REIMBURSED = '已报销',
   NOT_REIMBURSED = '未报销',
@@ -49,6 +50,9 @@ export interface Invoice {
   ground_truth: Record<string, any> | null;
   field_states: Record<string, { status: string; label: string; ocr: string | null; llm: string | null; confidence: number }> | null;
   user_corrections: Record<string, string> | null;
+  confirmation_mode: 'AUTO' | 'USER_SELECTION' | 'USER_EDIT' | 'ADMIN_CORRECTION' | null;
+  decision_trace: Record<string, any> | null;
+  selection_fields: string[] | null;
   spend_category: string | null;
   carbon_kg: number | null;
   created_at: string;
@@ -175,12 +179,74 @@ export interface ParsingDiff {
   field_name: string;
   ocr_value: string | null;
   llm_value: string | null;
+  machine_value: string | null;
+  machine_source: string | null;
+  machine_confidence: number | null;
+  decision_rule_type: string | null;
+  decision_reason: any;
   final_value: string | null;
   source: string | null;
   confidence: number | null;      // 综合融合置信度 (0.00-1.00)
   ocr_confidence: number | null;  // OCR字段级置信度 (0.00-1.00)
   llm_confidence: number | null;  // LLM自评置信度 (0.00-1.00)
   resolved: number;
+  resolved_by?: 'subject_review' | 'field_review' | 'auto' | null;
+}
+
+export interface SubjectReviewScheme {
+  key: string;
+  label: string;
+  display_label?: string;       // 人话名称，如"按OCR整组"
+  score: number;
+  fields: Record<string, string | null>;
+  origins: Record<string, string>;
+  risk_reasons: string[];
+}
+
+export interface SubjectReviewTrace {
+  group_key: string;
+  applied?: boolean;
+  applied_mode?: 'scheme' | 'manual' | null;
+  manual_review_required: boolean;
+  auto_accepted: boolean;
+  risk_level: string;
+  risk_reasons: string[];
+  primary_message?: string;             // 人话风险提示
+  action_hint?: string;                 // 建议操作
+  recommended_scheme_key: string;
+  recommended_scheme_label: string;
+  recommended_score: number;
+  second_best_score: number | null;
+  score_gap: number;
+  recommended_fields: Record<string, string | null>;
+  recommended_origins: Record<string, string>;
+  candidate_schemes: SubjectReviewScheme[];
+  decision_reason: string[];
+  user_selected_fields?: string[];
+  resolved_fields?: string[];
+  all_fields_resolved?: boolean;
+  last_action_source?: string | null;
+  applied_scheme_key?: string;
+  applied_scheme_display_label?: string | null;
+}
+
+export interface SubjectReviewApplyRequest {
+  scheme_key?: string;
+  mode?: string;
+  fields?: Record<string, string>;
+}
+
+export interface SubjectReviewApplyResponse {
+  invoice_id: number;
+  applied?: boolean;
+  applied_mode: string;
+  scheme_key?: string;
+  scheme_display_label?: string;
+  resolved_fields: string[];
+  all_subject_fields_resolved?: boolean;
+  next_status: string;
+  next_status_label: string;
+  message: string;
 }
 
 export interface ImageForensicsResult {
@@ -225,26 +291,61 @@ export interface UploadResponse {
   message: string;
 }
 
-// 双引擎精度评估
-export interface EvalAccuracy {
+export interface FusionExperimentResponse {
   annotated_count: number;
   total_fields: number;
-  overall: { ocr: number; llm: number; fusion: number };
-  per_field: { field: string; label: string; ocr: number; llm: number; fusion: number; samples: number }[];
-  cross_validation: {
-    agree_rate: number;
-    agree_both_correct: number;
-    agree_both_wrong: number;
-    disagree_rate: number;
-    disagree_ocr_correct: number;
-    disagree_llm_correct: number;
-    disagree_neither: number;
+  overall: {
+    ocr: number;
+    llm: number;
+    fusion: number;
+    best_single: number;
+    fusion_gain: number;
   };
-  review_savings: {
-    auto_pass_rate: number;
+  strategy_cards: { key: string; title: string; desc: string }[];
+  per_field: {
+    field: string;
+    label: string;
+    ocr: number;
+    llm: number;
+    fusion: number;
+    gain: number;
+    samples: number;
+  }[];
+  typical_cases: {
+    invoice_id: number;
+    file_name: string;
+    field: string;
+    label: string;
+    ocr_value: string;
+    llm_value: string;
+    fusion_value: string;
+    fusion_source: string;
+    ground_truth: string;
+    decision_rule_type: string;
+    decision_reason: string[];
+  }[];
+}
+
+export interface WorkflowMetricsResponse {
+  invoice_count: number;
+  fields_total: number;
+  conflict_rate: number;
+  auto_pass_rate: number;
+  manual_review_rate: number;
+  auto_decision_hit_rate: number;
+  final_human_in_loop_accuracy: number;
+  counts: {
+    conflict_count: number;
     auto_pass_count: number;
-    need_review_count: number;
+    manual_review_count: number;
+    machine_conflict_decisions: number;
   };
+}
+
+// 双引擎精度评估
+export interface EvalAccuracy {
+  experiment: FusionExperimentResponse;
+  workflow: WorkflowMetricsResponse;
 }
 
 // 用户个人信息（电子签名）

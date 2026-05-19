@@ -166,6 +166,115 @@
   padding: var(--spacing-lg);
 }
 
+.subjectReviewCard {
+  background: linear-gradient(135deg, #fff7e6 0%, #fff1f0 100%);
+  border: 1px solid #ffd8bf;
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+}
+
+.subjectReviewHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-base);
+  margin-bottom: var(--spacing-base);
+}
+
+.subjectReviewTitle {
+  font-family: var(--font-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--foreground);
+}
+
+.subjectReviewSubtitle {
+  margin-top: 6px;
+  font-family: var(--font-secondary);
+  font-size: var(--font-size-sm);
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+
+.subjectReviewBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-base);
+}
+
+.subjectReviewSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--spacing-base);
+}
+
+.subjectSummaryItem {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #ffe7ba;
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+}
+
+.subjectSummaryItem span {
+  color: var(--muted-foreground);
+}
+
+.subjectRiskList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subjectRiskItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #ffccc7;
+  color: #cf1322;
+  font-size: var(--font-size-sm);
+}
+
+.subjectSchemePreview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.subjectPreviewCell {
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid #ffe7ba;
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 76px;
+}
+
+.subjectPreviewCell span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.subjectActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.subjectHint {
+  font-size: var(--font-size-sm);
+  color: #8c4a00;
+  line-height: 1.6;
+}
+
 /* Status Tag */
 .statusTag {
   display: inline-flex;

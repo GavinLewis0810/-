@@ -1,12 +1,14 @@
 import hashlib
 import json
-from typing import Optional, List
+from copy import deepcopy
+from typing import Optional, List, Dict, Any, Tuple
 from io import BytesIO
-from datetime import date
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
+from sqlalchemy.orm.attributes import flag_modified
 from decimal import Decimal
 
 from app.database import get_db
@@ -17,6 +19,7 @@ from app.schemas.invoice import (
     InvoiceUpdate, BatchUpdateRequest, BatchDeleteRequest, StatisticsResponse, UploadResponse,
     ResolveDiffRequest, GroundTruthSave,
     ConfirmInvoiceRequest, ConfirmInvoiceResponse,
+    SubjectReviewApplyRequest, SubjectReviewApplyResponse,
 )
 from app.config import get_settings
 from app.services.audit_service import log_audit_no_commit, get_client_info
@@ -358,6 +361,11 @@ async def get_invoice(
         "reimbursement_id": invoice.reimbursement_id,
         "invoice_hash": invoice.invoice_hash,
         "ground_truth": invoice.ground_truth,
+        "field_states": invoice.field_states,
+        "user_corrections": invoice.user_corrections,
+        "confirmation_mode": invoice.confirmation_mode,
+        "decision_trace": invoice.decision_trace,
+        "selection_fields": invoice.selection_fields,
         "created_at": invoice.created_at,
         "updated_at": invoice.updated_at,
         "ocr_result": ocr,
@@ -399,6 +407,38 @@ async def get_invoice_file(
         content=invoice.file_data,
         media_type=content_type_map.get(invoice.file_type, "application/octet-stream"),
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
+    )
+
+
+@router.get("/{invoice_id}/preview")
+async def preview_invoice_file(
+        invoice_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    """内嵌预览用：返回 inline 票面内容。"""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+
+    query = select(Invoice).where(Invoice.id == invoice_id)
+    result = await db.execute(query)
+    invoice = result.scalar_one_or_none()
+
+    if not invoice:
+        raise HTTPException(status_code=404, detail="发票不存在")
+
+    content_type_map = {
+        "pdf": "application/pdf",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png"
+    }
+
+    encoded_filename = quote(invoice.file_name)
+
+    return Response(
+        content=invoice.file_data,
+        media_type=content_type_map.get(invoice.file_type, "application/octet-stream"),
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}"}
     )
 
 
@@ -482,6 +522,8 @@ FIELD_LABELS = {
     "total_with_tax": "价税合计", "amount": "不含税金额", "tax_rate": "税率", "tax_amount": "税额",
 }
 
+SUBJECT_FIELDS = {"buyer_name", "buyer_tax_id", "seller_name", "seller_tax_id"}
+
 HIGH_CONFIDENCE = 0.95
 LOW_CONFIDENCE = 0.70
 
@@ -521,6 +563,58 @@ def _build_field_states(diffs: list) -> dict:
     return states
 
 
+async def _supports_status_value(db: AsyncSession, status_value: str) -> bool:
+    """Check whether current DB enum accepts a given invoice status label."""
+    try:
+        rows = await db.execute(text(
+            """
+            SELECT 1
+            FROM pg_type t
+            JOIN pg_enum e ON e.enumtypid = t.oid
+            WHERE e.enumlabel = :label
+            LIMIT 1
+            """
+        ), {"label": status_value})
+        return rows.first() is not None
+    except Exception:
+        # If DB is not PostgreSQL or catalog query fails, stay conservative.
+        return False
+
+
+async def _ensure_pending_voucher_review_status(db: AsyncSession) -> bool:
+    """Best-effort ensure DB enum for invoices.status contains '待随单审核'."""
+    # SQLAlchemy Enum persists enum member name by default (e.g. PENDING_RECHECK).
+    target_label = InvoiceStatus.PENDING_VOUCHER_REVIEW.name
+    if await _supports_status_value(db, target_label):
+        return True
+
+    try:
+        # Discover enum type name from invoices.status column, then add value.
+        row = await db.execute(text(
+            """
+            SELECT t.typname
+            FROM pg_attribute a
+            JOIN pg_class c ON a.attrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            JOIN pg_type t ON a.atttypid = t.oid
+            WHERE n.nspname = 'public'
+              AND c.relname = 'invoices'
+              AND a.attname = 'status'
+            LIMIT 1
+            """
+        ))
+        enum_name_row = row.first()
+        if not enum_name_row:
+            return False
+        enum_name = enum_name_row[0]
+        await db.execute(text(
+            f"ALTER TYPE {enum_name} ADD VALUE IF NOT EXISTS '{target_label}'"
+        ))
+        return await _supports_status_value(db, target_label)
+    except Exception:
+        return False
+
+
 @router.post("/{invoice_id}/confirm", response_model=ConfirmInvoiceResponse)
 async def confirm_invoice(
         invoice_id: int,
@@ -537,6 +631,7 @@ async def confirm_invoice(
 
     if invoice.status not in [InvoiceStatus.REVIEWING, InvoiceStatus.PENDING]:
         raise HTTPException(status_code=400, detail="当前发票状态不允许确认操作")
+    old_status = invoice.status.value
 
     # 加载解析差异数据（用局部变量，避免给 ORM relationship 赋值触发懒加载炸 greenlet）
     diff_query = select(ParsingDiff).where(ParsingDiff.invoice_id == invoice_id)
@@ -546,6 +641,19 @@ async def confirm_invoice(
     # 1. 构建字段状态快照
     field_states = _build_field_states(diffs)
     invoice.field_states = field_states
+
+    selection_sources = {"ocr", "llm", "custom"}
+    selected_fields = sorted({
+        d.field_name for d in diffs
+        if d.resolved == 1
+        and (d.source or "").lower() in selection_sources
+        and (
+            (d.machine_source or "").lower() in {"manual_review", "", "matched"}
+            or (d.source or "").lower() != (d.machine_source or "").lower()
+            or (d.final_value or None) != (d.machine_value or None)
+        )
+    })
+    invoice.selection_fields = selected_fields or None
 
     # 2. 对比用户修正
     corrections = body.corrections or {}
@@ -558,24 +666,68 @@ async def confirm_invoice(
         if user_val != cur_str:
             corrected_fields.append(field)
 
+    confirmation_mode = "AUTO"
+    risk_level = "low"
+    requires_voucher_review = False
+
+    existing_trace = deepcopy(invoice.decision_trace) if isinstance(invoice.decision_trace, dict) else {}
+    subject_review = existing_trace.get("subject_review") if existing_trace else None
+    subject_selected = [field for field in selected_fields if field in SUBJECT_FIELDS]
+
     if corrected_fields:
         invoice.user_corrections = {f: corrections[f] for f in corrected_fields}
         for field in corrected_fields:
             setattr(invoice, field, corrections[field])
         invoice.status = InvoiceStatus.PENDING_RECHECK
-        message = f"已标记 {len(corrected_fields)} 个用户修正字段，待管理员核对"
+        confirmation_mode = "USER_EDIT"
+        risk_level = "high"
+        message = f"已标记 {len(corrected_fields)} 个手工修正字段，进入待重审"
+    elif selected_fields:
+        invoice.user_corrections = None
+        ensured = await _ensure_pending_voucher_review_status(db)
+        if not ensured:
+            raise HTTPException(status_code=500, detail="数据库状态枚举未完成升级，无法进入待随单审核")
+        invoice.status = InvoiceStatus.PENDING_VOUCHER_REVIEW
+        message = f"检测到用户选择字段 {len(selected_fields)} 个，进入待随单审核"
+        confirmation_mode = "USER_SELECTION"
+        risk_level = "high" if subject_selected else "medium"
+        requires_voucher_review = True
     else:
         invoice.user_corrections = None
         invoice.status = InvoiceStatus.CONFIRMED
-        message = "发票已确认，字段未被修改"
+        confirmation_mode = "AUTO"
+        risk_level = "low"
+        message = "发票自动确认通过，可进入可报销池"
+
+    invoice.confirmation_mode = confirmation_mode
+    existing_trace = invoice.decision_trace if isinstance(invoice.decision_trace, dict) else {}
+    invoice.decision_trace = {
+        **existing_trace,
+        "selected_fields": selected_fields,
+        "corrected_fields": corrected_fields,
+        "unresolved_diff_count": sum(1 for d in diffs if d.resolved == 0),
+        "risk_level": risk_level,
+        "requires_voucher_review": requires_voucher_review,
+        "subject_review": {
+            **subject_review,
+            "user_selected_fields": subject_selected,
+            "manual_confirmation_mode": confirmation_mode,
+        } if isinstance(subject_review, dict) else None,
+    }
 
     # 3. 审计日志
     client_info = get_client_info(request)
     await log_audit_no_commit(
         db=db, entity_type="invoice", entity_id=invoice_id,
         action="confirm",
-        old_value={"status": invoice.status.value, "corrections": corrections},
-        new_value={"status": invoice.status.value, "corrected_fields": corrected_fields},
+        old_value={"status": old_status, "corrections": corrections},
+        new_value={
+            "status": invoice.status.value,
+            "confirmation_mode": confirmation_mode,
+            "corrected_fields": corrected_fields,
+            "selection_fields": selected_fields,
+            "risk_level": risk_level,
+        },
         ip_address=client_info.get("ip_address"),
         user_agent=client_info.get("user_agent"),
     )
@@ -588,7 +740,21 @@ async def confirm_invoice(
         status=invoice.status.value,
         has_corrections=len(corrected_fields) > 0,
         corrected_fields=corrected_fields,
+        confirmation_mode=confirmation_mode,
+        risk_level=risk_level,
+        requires_voucher_review=requires_voucher_review,
+        selection_fields=selected_fields,
         message=message,
+        next_status_label=(
+            "待重审" if corrected_fields
+            else "待随单审核" if selected_fields
+            else "已确认"
+        ),
+        workflow_transition=(
+            "REVIEWING→PENDING_RECHECK" if corrected_fields
+            else "REVIEWING→PENDING_VOUCHER_REVIEW" if selected_fields
+            else "REVIEWING→CONFIRMED"
+        ),
     )
 
 
@@ -638,127 +804,256 @@ _EVAL_LABELS = {
 }
 
 
-@router.get("/eval/accuracy")
-async def eval_accuracy(db: AsyncSession = Depends(get_db)):
-    """双引擎字段提取精度评估，返回结构化JSON供前端可视化"""
-    from sqlalchemy import text as sa_text
+def _build_engine_fields(row: Any, comparable_fields: List[str]) -> Dict[str, Any]:
+    return {field: getattr(row, field, None) if row is not None else None for field in comparable_fields}
 
-    # Load all invoices with ground_truth
-    inv_q = await db.execute(
-        select(Invoice.id, Invoice.file_name, Invoice.ground_truth)
-        .where(Invoice.ground_truth.isnot(None))
-    )
-    gt_rows = inv_q.all()
-    if not gt_rows:
+
+async def _collect_invoice_eval_context(db: AsyncSession, invoice: Invoice) -> Tuple[Any, Any, Dict[str, ParsingDiff]]:
+    inv_id = invoice.id
+    ocr_row = (await db.execute(select(OcrResult).where(OcrResult.invoice_id == inv_id))).scalar_one_or_none()
+    llm_row = (await db.execute(select(LlmResult).where(LlmResult.invoice_id == inv_id))).scalar_one_or_none()
+    diffs = (await db.execute(select(ParsingDiff).where(ParsingDiff.invoice_id == inv_id))).scalars().all()
+    return ocr_row, llm_row, {diff.field_name: diff for diff in diffs}
+
+
+def _extract_eval_values(
+    invoice: Invoice,
+    field: str,
+    ocr_row: Any,
+    llm_row: Any,
+    diff_map: Dict[str, ParsingDiff],
+) -> Dict[str, str]:
+    diff = diff_map.get(field)
+    return {
+        'ocr': _norm(getattr(ocr_row, field, None) if ocr_row else None, field),
+        'llm': _norm(getattr(llm_row, field, None) if llm_row else None, field),
+        'machine': _norm(diff.machine_value if diff and diff.machine_value is not None else None, field),
+        'final': _norm(
+            diff.final_value if diff and diff.final_value is not None else getattr(invoice, field, None),
+            field,
+        ),
+    }
+
+
+def _rerun_machine_decisions(ocr_row: Any, llm_row: Any, diff_map: Dict[str, ParsingDiff]) -> Dict[str, Dict[str, Any]]:
+    from app.services.invoice_service import COMPARABLE_FIELDS as SERVICE_FIELDS, _compare_and_resolve
+
+    ocr_fields = _build_engine_fields(ocr_row, SERVICE_FIELDS)
+    llm_fields = _build_engine_fields(llm_row, SERVICE_FIELDS)
+    has_llm = llm_row is not None
+    if not has_llm:
+        return {
+            field: {
+                'field_name': field,
+                'machine_value': ocr_fields.get(field),
+                'machine_source': 'ocr',
+                'machine_confidence': None,
+                'decision_rule_type': 'single_engine',
+                'decision_reason': ['llm_unavailable'],
+            }
+            for field in SERVICE_FIELDS
+            if ocr_fields.get(field)
+        }
+    ocr_confs = {
+        field: (float(diff_map[field].ocr_confidence) * 100.0) if field in diff_map and diff_map[field].ocr_confidence is not None else None
+        for field in SERVICE_FIELDS
+    }
+    llm_confs = {
+        field: float(diff_map[field].llm_confidence) if field in diff_map and diff_map[field].llm_confidence is not None else None
+        for field in SERVICE_FIELDS
+    }
+    _, rerun_diffs, _ = _compare_and_resolve(ocr_fields, llm_fields, has_llm, llm_confs, ocr_confs)
+    return {item['field_name']: item for item in rerun_diffs}
+
+
+async def _build_fusion_experiment(db: AsyncSession) -> Dict[str, Any]:
+    invoices = (await db.execute(select(Invoice).where(Invoice.ground_truth.isnot(None)))).scalars().all()
+    if not invoices:
         return {"annotated_count": 0, "message": "暂无标注数据"}
 
-    per_field = {f: {'ocr_correct': 0, 'llm_correct': 0, 'fusion_correct': 0, 'total': 0}
-                 for f in _EVAL_FIELDS}
-    overall = {'ocr_correct': 0, 'llm_correct': 0, 'fusion_correct': 0, 'total': 0}
-    cv_stats = {'agree': 0, 'agree_both_ok': 0, 'agree_both_bad': 0,
-                'disagree': 0, 'disagree_ocr_ok': 0, 'disagree_llm_ok': 0,
-                'disagree_neither': 0}
+    per_field = {field: {'ocr': 0, 'llm': 0, 'fusion': 0, 'total': 0} for field in _EVAL_FIELDS}
+    overall = {'ocr': 0, 'llm': 0, 'fusion': 0, 'total': 0}
+    typical_cases: List[Dict[str, Any]] = []
 
-    for inv_id, _, gt_json in gt_rows:
-        gt = gt_json if isinstance(gt_json, dict) else {}
-
-        # OCR
-        ocr_row = (await db.execute(
-            select(OcrResult).where(OcrResult.invoice_id == inv_id)
-        )).scalar_one_or_none()
-        # LLM
-        llm_row = (await db.execute(
-            select(LlmResult).where(LlmResult.invoice_id == inv_id)
-        )).scalar_one_or_none()
-        # Fusion
-        diffs = (await db.execute(
-            select(ParsingDiff).where(ParsingDiff.invoice_id == inv_id)
-        )).scalars().all()
-        fusion_map = {d.field_name: d.final_value for d in diffs}
+    for invoice in invoices:
+        gt = invoice.ground_truth if isinstance(invoice.ground_truth, dict) else {}
+        ocr_row, llm_row, diff_map = await _collect_invoice_eval_context(db, invoice)
+        rerun_map = _rerun_machine_decisions(ocr_row, llm_row, diff_map)
 
         for field in _EVAL_FIELDS:
             gt_val = _norm(gt.get(field), field)
             if not gt_val:
                 continue
 
-            ocr_val = _norm(getattr(ocr_row, field, None) if ocr_row else None, field)
-            llm_val = _norm(getattr(llm_row, field, None) if llm_row else None, field)
-            fusion_val = _norm(fusion_map.get(field), field)
+            values = _extract_eval_values(invoice, field, ocr_row, llm_row, diff_map)
+            fusion_decision = rerun_map.get(field, {})
+            fusion_val = _norm(fusion_decision.get('machine_value'), field)
 
-            ocr_ok = _eval_eq(ocr_val, gt_val, field)
-            llm_ok = _eval_eq(llm_val, gt_val, field)
+            ocr_ok = _eval_eq(values['ocr'], gt_val, field)
+            llm_ok = _eval_eq(values['llm'], gt_val, field)
             fusion_ok = _eval_eq(fusion_val, gt_val, field)
 
-            per_field[field]['ocr_correct'] += int(ocr_ok)
-            per_field[field]['llm_correct'] += int(llm_ok)
-            per_field[field]['fusion_correct'] += int(fusion_ok)
+            per_field[field]['ocr'] += int(ocr_ok)
+            per_field[field]['llm'] += int(llm_ok)
+            per_field[field]['fusion'] += int(fusion_ok)
             per_field[field]['total'] += 1
-            overall['ocr_correct'] += int(ocr_ok)
-            overall['llm_correct'] += int(llm_ok)
-            overall['fusion_correct'] += int(fusion_ok)
+
+            overall['ocr'] += int(ocr_ok)
+            overall['llm'] += int(llm_ok)
+            overall['fusion'] += int(fusion_ok)
             overall['total'] += 1
 
-            # Cross-validation
-            if ocr_val and llm_val:
-                if ocr_val == llm_val:
-                    cv_stats['agree'] += 1
-                    if ocr_ok and llm_ok:
-                        cv_stats['agree_both_ok'] += 1
-                    elif not ocr_ok and not llm_ok:
-                        cv_stats['agree_both_bad'] += 1
-                else:
-                    cv_stats['disagree'] += 1
-                    if ocr_ok:
-                        cv_stats['disagree_ocr_ok'] += 1
-                    if llm_ok:
-                        cv_stats['disagree_llm_ok'] += 1
-                    if not ocr_ok and not llm_ok:
-                        cv_stats['disagree_neither'] += 1
-
-    # Build per-field list
-    fields_out = []
-    for f in _EVAL_FIELDS:
-        st = per_field[f]
-        if st['total'] == 0:
-            continue
-        fields_out.append({
-            'field': f,
-            'label': _EVAL_LABELS.get(f, f),
-            'ocr': round(st['ocr_correct'] / st['total'], 4),
-            'llm': round(st['llm_correct'] / st['total'], 4),
-            'fusion': round(st['fusion_correct'] / st['total'], 4),
-            'samples': st['total'],
-        })
+            if (
+                len(typical_cases) < 3
+                and values['ocr']
+                and values['llm']
+                and not _eval_eq(values['ocr'], values['llm'], field)
+                and fusion_decision.get('machine_source') in ('ocr', 'llm')
+            ):
+                typical_cases.append({
+                    'invoice_id': invoice.id,
+                    'file_name': invoice.file_name,
+                    'field': field,
+                    'label': _EVAL_LABELS.get(field, field),
+                    'ocr_value': values['ocr'],
+                    'llm_value': values['llm'],
+                    'fusion_value': fusion_val,
+                    'fusion_source': fusion_decision.get('machine_source'),
+                    'ground_truth': gt_val,
+                    'decision_rule_type': fusion_decision.get('decision_rule_type'),
+                    'decision_reason': fusion_decision.get('decision_reason') or [],
+                })
 
     total = overall['total']
-    agree = cv_stats['agree']
-    disagree = cv_stats['disagree']
-    pairs = agree + disagree
-    auto_pass = cv_stats['agree_both_ok']
+    ocr_accuracy = round(overall['ocr'] / total, 4) if total else 0
+    llm_accuracy = round(overall['llm'] / total, 4) if total else 0
+    fusion_accuracy = round(overall['fusion'] / total, 4) if total else 0
+    best_single = max(ocr_accuracy, llm_accuracy)
+
+    field_rows = []
+    for field in _EVAL_FIELDS:
+        stats = per_field[field]
+        if stats['total'] == 0:
+            continue
+        ocr_rate = round(stats['ocr'] / stats['total'], 4)
+        llm_rate = round(stats['llm'] / stats['total'], 4)
+        fusion_rate = round(stats['fusion'] / stats['total'], 4)
+        best_field_single = max(ocr_rate, llm_rate)
+        field_rows.append({
+            'field': field,
+            'label': _EVAL_LABELS.get(field, field),
+            'ocr': ocr_rate,
+            'llm': llm_rate,
+            'fusion': fusion_rate,
+            'gain': round(fusion_rate - best_field_single, 4),
+            'samples': stats['total'],
+        })
 
     return {
-        'annotated_count': len(gt_rows),
+        'annotated_count': len(invoices),
         'total_fields': total,
         'overall': {
-            'ocr': round(overall['ocr_correct'] / total, 4) if total else 0,
-            'llm': round(overall['llm_correct'] / total, 4) if total else 0,
-            'fusion': round(overall['fusion_correct'] / total, 4) if total else 0,
+            'ocr': ocr_accuracy,
+            'llm': llm_accuracy,
+            'fusion': fusion_accuracy,
+            'best_single': best_single,
+            'fusion_gain': round(fusion_accuracy - best_single, 4),
         },
-        'per_field': fields_out,
-        'cross_validation': {
-            'agree_rate': round(agree / pairs, 4) if pairs else 0,
-            'agree_both_correct': round(cv_stats['agree_both_ok'] / agree, 4) if agree else 0,
-            'agree_both_wrong': round(cv_stats['agree_both_bad'] / agree, 4) if agree else 0,
-            'disagree_rate': round(disagree / pairs, 4) if pairs else 0,
-            'disagree_ocr_correct': round(cv_stats['disagree_ocr_ok'] / disagree, 4) if disagree else 0,
-            'disagree_llm_correct': round(cv_stats['disagree_llm_ok'] / disagree, 4) if disagree else 0,
-            'disagree_neither': round(cv_stats['disagree_neither'] / disagree, 4) if disagree else 0,
+        'per_field': field_rows,
+        'strategy_cards': [
+            {'key': 'confidence', 'title': '置信度融合', 'desc': '综合 OCR 字段置信度与 LLM 自评置信度，形成候选基础分。'},
+            {'key': 'validity', 'title': '字段合法性校验', 'desc': '针对税号、日期、票号、金额分别做格式与规则校验。'},
+            {'key': 'consistency', 'title': '跨字段一致性', 'desc': '金额类字段校验 amount + tax_amount ≈ total_with_tax。'},
+            {'key': 'risk', 'title': '高风险转人工', 'desc': '分数接近或规则无法判定时，不盲选，进入人工复核。'},
+        ],
+        'typical_cases': typical_cases,
+    }
+
+
+async def _build_workflow_metrics(db: AsyncSession) -> Dict[str, Any]:
+    invoices = (await db.execute(select(Invoice))).scalars().all()
+    if not invoices:
+        return {"invoice_count": 0, "message": "暂无发票数据"}
+
+    fields_total = 0
+    conflict_count = 0
+    auto_pass_count = 0
+    manual_review_count = 0
+    machine_conflict_decisions = 0
+    machine_conflict_hits = 0
+    annotated_final_total = 0
+    annotated_final_correct = 0
+
+    for invoice in invoices:
+        gt = invoice.ground_truth if isinstance(invoice.ground_truth, dict) else {}
+        ocr_row, llm_row, diff_map = await _collect_invoice_eval_context(db, invoice)
+        rerun_map = _rerun_machine_decisions(ocr_row, llm_row, diff_map)
+
+        for field, diff in diff_map.items():
+            if field not in _EVAL_FIELDS:
+                continue
+            values = _extract_eval_values(invoice, field, ocr_row, llm_row, diff_map)
+            machine_decision = rerun_map.get(field, {})
+            has_candidate = bool(values['ocr'] or values['llm'])
+            if not has_candidate:
+                continue
+            fields_total += 1
+
+            is_conflict = bool(values['ocr'] and values['llm'] and not _eval_eq(values['ocr'], values['llm'], field))
+            if is_conflict:
+                conflict_count += 1
+
+            if machine_decision.get('machine_source') == 'manual_review':
+                manual_review_count += 1
+            elif machine_decision.get('machine_source') in ('ocr', 'llm', 'matched') and machine_decision.get('machine_value'):
+                auto_pass_count += 1
+
+            gt_val = _norm(gt.get(field), field)
+            if gt_val:
+                annotated_final_total += 1
+                if _eval_eq(values['final'], gt_val, field):
+                    annotated_final_correct += 1
+
+                if is_conflict and machine_decision.get('machine_source') in ('ocr', 'llm') and machine_decision.get('machine_value'):
+                    machine_conflict_decisions += 1
+                    if _eval_eq(_norm(machine_decision.get('machine_value'), field), gt_val, field):
+                        machine_conflict_hits += 1
+
+    return {
+        'invoice_count': len(invoices),
+        'fields_total': fields_total,
+        'conflict_rate': round(conflict_count / fields_total, 4) if fields_total else 0,
+        'auto_pass_rate': round(auto_pass_count / fields_total, 4) if fields_total else 0,
+        'manual_review_rate': round(manual_review_count / fields_total, 4) if fields_total else 0,
+        'auto_decision_hit_rate': round(machine_conflict_hits / machine_conflict_decisions, 4) if machine_conflict_decisions else 0,
+        'final_human_in_loop_accuracy': round(annotated_final_correct / annotated_final_total, 4) if annotated_final_total else 0,
+        'counts': {
+            'conflict_count': conflict_count,
+            'auto_pass_count': auto_pass_count,
+            'manual_review_count': manual_review_count,
+            'machine_conflict_decisions': machine_conflict_decisions,
         },
-        'review_savings': {
-            'auto_pass_rate': round(auto_pass / pairs, 4) if pairs else 0,
-            'auto_pass_count': auto_pass,
-            'need_review_count': pairs - auto_pass,
-        },
+    }
+
+
+@router.get("/eval/fusion-experiment")
+async def eval_fusion_experiment(db: AsyncSession = Depends(get_db)):
+    """离线纯算法实验：OCR vs LLM vs 融合策略。"""
+    return await _build_fusion_experiment(db)
+
+
+@router.get("/eval/workflow")
+async def eval_workflow(db: AsyncSession = Depends(get_db)):
+    """在线人机协同流程评估。"""
+    return await _build_workflow_metrics(db)
+
+
+@router.get("/eval/accuracy")
+async def eval_accuracy(db: AsyncSession = Depends(get_db)):
+    """兼容旧页面：同时返回离线实验与在线流程评估。"""
+    return {
+        'experiment': await _build_fusion_experiment(db),
+        'workflow': await _build_workflow_metrics(db),
     }
 
 
@@ -1099,6 +1394,20 @@ async def resolve_diff(
     all_diffs_result = await db.execute(all_diffs_query)
     all_diffs = all_diffs_result.scalars().all()
 
+    if isinstance(invoice.decision_trace, dict):
+        existing_trace = deepcopy(invoice.decision_trace)
+        subject_review = existing_trace.get("subject_review")
+        if isinstance(subject_review, dict):
+            subject_diffs = [item for item in all_diffs if item.field_name in SUBJECT_FIELDS]
+            subject_review["resolved_fields"] = sorted([item.field_name for item in subject_diffs if item.resolved == 1])
+            subject_review["all_fields_resolved"] = all(item.resolved == 1 for item in subject_diffs) if subject_diffs else False
+            subject_review["last_action_source"] = resolve_request.source if field_name in SUBJECT_FIELDS else subject_review.get("last_action_source")
+            invoice.decision_trace = {
+                **existing_trace,
+                "subject_review": subject_review,
+            }
+            flag_modified(invoice, "decision_trace")
+
     all_resolved = all(d.resolved == 1 for d in all_diffs)
     if all_resolved:
         invoice.status = InvoiceStatus.REVIEWING
@@ -1132,117 +1441,136 @@ async def resolve_diff(
     }
 
 
-@router.post("/{invoice_id}/confirm")
-async def confirm_invoice(
-        invoice_id: int,
-        request: Request,
-        db: AsyncSession = Depends(get_db)
+@router.post("/{invoice_id}/subject-review/apply", response_model=SubjectReviewApplyResponse)
+async def apply_subject_review(
+    invoice_id: int,
+    body: SubjectReviewApplyRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
 ):
-    """确认发票，标记所有差异为已解决。"""
-    # Get invoice
-    invoice_query = select(Invoice).where(Invoice.id == invoice_id)
-    invoice_result = await db.execute(invoice_query)
-    invoice = invoice_result.scalar_one_or_none()
-
+    """主体复核整组应用：一次调用解决4个主体字段，避免前端循环4次逐字段 resolve。"""
+    query = select(Invoice).where(Invoice.id == invoice_id)
+    result = await db.execute(query)
+    invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(status_code=404, detail="发票不存在")
 
-    if invoice.invoice_number:
-        duplicate_query = select(Invoice).where(
-            Invoice.invoice_number == invoice.invoice_number,
-            Invoice.id != invoice_id,
-            Invoice.status.in_([InvoiceStatus.CONFIRMED, InvoiceStatus.REIMBURSED])
+    existing_trace = deepcopy(invoice.decision_trace) if isinstance(invoice.decision_trace, dict) else {}
+    subject_review = existing_trace.get("subject_review") if existing_trace else None
+    if not subject_review:
+        raise HTTPException(status_code=400, detail="该发票无主体复核数据")
+
+    subject_diffs_result = await db.execute(
+        select(ParsingDiff).where(
+            ParsingDiff.invoice_id == invoice_id,
+            ParsingDiff.field_name.in_(SUBJECT_FIELDS),
         )
-        duplicate_result = await db.execute(duplicate_query)
-        duplicate_invoice = duplicate_result.scalar_one_or_none()
+    )
+    subject_diffs = subject_diffs_result.scalars().all()
+    diff_map = {d.field_name: d for d in subject_diffs}
 
-        if duplicate_invoice:
-            raise HTTPException(
-                status_code=400,
-                detail=f"确认失败！系统内已存在发票号为【{invoice.invoice_number}】的记录，请先删除当前重复文件。"
-            )
+    resolved_fields: List[str] = []
+    scheme_key: Optional[str] = None
+    scheme_display_label: Optional[str] = None
 
-    # 🚨 修复：从必填字段中移除了 item_name
-    critical_fields = [
-        "invoice_number",
-        "issue_date",
-        "total_with_tax",
-        "buyer_name",
-        "seller_name",
-    ]
-    missing_fields = [field for field in critical_fields if not getattr(invoice, field)]
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail="无法确认：必填字段缺失，请补全后再确认。"
-        )
+    if body.mode == "manual" and body.fields:
+        # 手动修正模式
+        for field_name in SUBJECT_FIELDS:
+            value = body.fields.get(field_name)
+            # 同步主表字段（含空值）
+            setattr(invoice, field_name, value)
+            # 标记 diff 为已确认
+            diff = diff_map.get(field_name)
+            if diff:
+                diff.final_value = value
+                diff.source = "custom"
+                diff.resolved = 1
+            resolved_fields.append(field_name)
 
-    # Check if LLM result exists
-    llm_query = select(LlmResult).where(LlmResult.invoice_id == invoice_id)
-    llm_result = await db.execute(llm_query)
-    llm = llm_result.scalar_one_or_none()
-    has_llm = llm is not None
+        applied_mode = "manual"
+        msg = "主体信息已手动修正"
 
-    # Get parsing diffs to verify comparison exists
-    diffs_query = select(ParsingDiff).where(ParsingDiff.invoice_id == invoice_id)
-    diffs_result = await db.execute(diffs_query)
-    diffs = diffs_result.scalars().all()
+    elif body.scheme_key:
+        # 整组方案应用
+        schemes = subject_review.get("candidate_schemes", [])
+        scheme = next((s for s in schemes if s["key"] == body.scheme_key), None)
+        if not scheme:
+            raise HTTPException(status_code=400, detail=f"未知方案: {body.scheme_key}")
 
-    if has_llm and not diffs:
-        raise HTTPException(
-            status_code=400,
-            detail="无法确认：缺少OCR和LLM的比对结果。请重新解析发票。"
-        )
+        scheme_key = scheme["key"]
+        scheme_display_label = scheme.get("display_label", scheme["label"])
 
-    # Mark all diffs as resolved
-    for diff in diffs:
-        if diff.resolved == 0:
-            if not diff.final_value:
-                diff.final_value = diff.ocr_value or diff.llm_value
-            diff.resolved = 1
+        for field_name in SUBJECT_FIELDS:
+            value = scheme["fields"].get(field_name)
+            # 关键修复：空值也必须同步主表和标记已确认，不能 continue 跳过
+            setattr(invoice, field_name, value)
+            diff = diff_map.get(field_name)
+            if diff:
+                diff.final_value = value
+                diff.source = scheme["origins"].get(field_name, "ocr")
+                diff.resolved = 1
+            resolved_fields.append(field_name)
 
-    # 生成数字指纹：SHA-256 数据完整性校验哈希
-    raw = json.dumps({
-        "invoice_number": invoice.invoice_number,
-        "issue_date": str(invoice.issue_date) if invoice.issue_date else None,
-        "total_with_tax": str(invoice.total_with_tax) if invoice.total_with_tax else None,
-        "amount": str(invoice.amount) if invoice.amount else None,
-        "tax_amount": str(invoice.tax_amount) if invoice.tax_amount else None,
-        "buyer_name": invoice.buyer_name,
-        "buyer_tax_id": invoice.buyer_tax_id,
-        "seller_name": invoice.seller_name,
-        "seller_tax_id": invoice.seller_tax_id,
-        "items": json.dumps(invoice.items, ensure_ascii=False) if invoice.items else None,
-        "owner_id": invoice.owner_id,
-        "status": InvoiceStatus.CONFIRMED.value,
-    }, sort_keys=True, ensure_ascii=False)
-    invoice.invoice_hash = hashlib.sha256(raw.encode('utf-8')).hexdigest()
-    print(f"[HASH] 发票 #{invoice.id} 数字指纹已生成: {invoice.invoice_hash[:16]}...")
+        applied_mode = "scheme"
+        msg = "主体信息已确认"
 
-    # Update invoice status
-    old_status = invoice.status.value if invoice.status else None
-    invoice.status = InvoiceStatus.CONFIRMED
+    else:
+        raise HTTPException(status_code=400, detail="请提供 scheme_key 或 mode=manual + fields")
 
-    # Audit log for confirmation
+    # 关键：主体复核完成 ≠ 整票确认完成，不在此处改 invoice.status
+    # 状态变更留给 confirm_invoice 统一处理
+
+    # 更新 subject_review 完整状态
+    subject_review["applied"] = True
+    subject_review["applied_mode"] = applied_mode
+    subject_review["applied_scheme_key"] = scheme_key
+    subject_review["applied_scheme_display_label"] = scheme_display_label
+    subject_review["resolved_fields"] = resolved_fields
+    subject_review["all_fields_resolved"] = True
+    subject_review["manual_fields_changed"] = resolved_fields if body.mode == "manual" else []
+    subject_review["applied_at"] = datetime.now().isoformat()
+    subject_review["applied_operator"] = "admin"
+
+    existing_trace["subject_review"] = subject_review
+    invoice.decision_trace = existing_trace
+    flag_modified(invoice, "decision_trace")
+
+    # 审计日志
     client_info = get_client_info(request)
     await log_audit_no_commit(
         db=db,
         entity_type="invoice",
         entity_id=invoice_id,
-        action="confirm",
-        old_value={"status": old_status},
+        action="subject_review_apply",
+        old_value={"status": invoice.status.value if invoice.status else None},
         new_value={
-            "status": InvoiceStatus.CONFIRMED.value,
-            "resolved_diffs": len(diffs),
-            "source": "llm" if has_llm else "ocr",
+            "applied_mode": applied_mode,
+            "applied_scheme_key": scheme_key,
+            "scheme_display_label": scheme_display_label,
+            "risk_level": subject_review.get("risk_level"),
+            "manual_fields_changed": resolved_fields if body.mode == "manual" else [],
+            "resolved_fields": resolved_fields,
+            "next_status": invoice.status.value if invoice.status else "",
         },
         ip_address=client_info.get("ip_address"),
         user_agent=client_info.get("user_agent"),
+        details=f"主体复核{'手动修正' if body.mode == 'manual' else '整组应用'}: {', '.join(resolved_fields)}",
     )
 
     await db.commit()
 
-    return {"message": "发票已确认", "resolved_count": len(diffs)}
+    return SubjectReviewApplyResponse(
+        invoice_id=invoice_id,
+        applied=True,
+        applied_mode=applied_mode,
+        scheme_key=scheme_key,
+        scheme_display_label=scheme_display_label,
+        resolved_fields=resolved_fields,
+        all_subject_fields_resolved=True,
+        next_status=invoice.status.value if invoice.status else "",
+        next_status_label=invoice.status.value if invoice.status else "",
+        message=msg,
+    )
 
 
 @router.post("/auto-confirm")
@@ -1306,6 +1634,19 @@ async def auto_confirm_invoices(
         invoice.invoice_hash = hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
         invoice.status = InvoiceStatus.CONFIRMED
+        invoice.confirmation_mode = "AUTO"
+        invoice.selection_fields = None
+        invoice.user_corrections = None
+        existing_trace = invoice.decision_trace if isinstance(invoice.decision_trace, dict) else {}
+        invoice.decision_trace = {
+            **existing_trace,
+            "selected_fields": [],
+            "corrected_fields": [],
+            "unresolved_diff_count": 0,
+            "risk_level": "low",
+            "requires_voucher_review": False,
+            "source": "auto_confirm",
+        }
         confirmed_ids.append(invoice.id)
 
         # 审计日志

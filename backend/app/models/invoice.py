@@ -21,6 +21,7 @@ class InvoiceStatus(str, Enum):
     REVIEWING = "待确认"     # 双引擎提取完成，等待用户确认
     CONFIRMED = "已确认"     # 用户已确认，字段未被修改，自动进入报销池
     PENDING_RECHECK = "待重审"  # 用户修改了字段，管理员需核对原始图像
+    PENDING_VOUCHER_REVIEW = "待随单审核"  # 用户参与字段决策，需随报销单复核
     REIMBURSED = "已报销"    # 报销单审批通过
     NOT_REIMBURSED = "未报销"
 
@@ -69,6 +70,9 @@ class Invoice(Base):
     # 发票确认流程：字段级状态快照
     field_states = Column(JSONB, nullable=True, comment="字段确认快照 {field: {status,ocr,llm,confidence}}")
     user_corrections = Column(JSONB, nullable=True, comment="用户修正记录 {field: user_entered_value}")
+    confirmation_mode = Column(String(32), nullable=True, comment="AUTO/USER_SELECTION/USER_EDIT")
+    decision_trace = Column(JSONB, nullable=True, comment="字段决策轨迹与风险摘要")
+    selection_fields = Column(JSONB, nullable=True, comment="在对比区人工选择过的字段列表")
 
     # 归属人：外键关联到 users 表
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -161,6 +165,11 @@ class ParsingDiff(Base):
     llm_value = Column(Text, nullable=True)  # LLM解析值
     final_value = Column(Text, nullable=True)  # 最终确认值
     source = Column(String(20), nullable=True)  # ocr/llm/manual
+    machine_value = Column(Text, nullable=True, comment="机器自动裁决值")
+    machine_source = Column(String(20), nullable=True, comment="机器裁决来源: ocr/llm/manual_review/matched")
+    machine_confidence = Column(Numeric(4, 2), nullable=True, comment="机器综合裁决置信度(0.00-1.00)")
+    decision_rule_type = Column(String(40), nullable=True, comment="机器裁决规则类型")
+    decision_reason = Column(JSONB, nullable=True, comment="机器裁决依据")
     confidence = Column(Numeric(4, 2), nullable=True, comment="综合融合置信度(0.00-1.00)")
     ocr_confidence = Column(Numeric(4, 2), nullable=True, comment="OCR字段级置信度(0.00-1.00)")
     llm_confidence = Column(Numeric(4, 2), nullable=True, comment="LLM自评置信度(0.00-1.00)")

@@ -1,51 +1,143 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Table, Tag, Button, Space, message, Card, Popconfirm, Drawer,
-  Alert, Divider, Input, Modal, Timeline
+  Alert,
+  Button,
+  Card,
+  Col,
+  Divider,
+  Drawer,
+  Input,
+  message,
+  Modal,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Timeline,
 } from 'antd';
 import {
-  RobotOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined,
-  EyeOutlined,
-  ThunderboltOutlined,
   ClockCircleOutlined,
-  DownloadOutlined,
+  CloseCircleOutlined,
   DollarOutlined,
+  DownloadOutlined,
+  EyeOutlined,
+  FilterOutlined,
+  RobotOutlined,
+  SearchOutlined,
+  ThunderboltOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  getReimbursements,
-  deleteReimbursement,
   aiCheckReimbursement,
   approveReimbursement,
-  rejectReimbursement,
   completeReimbursement,
+  deleteReimbursement,
+  getReimbursements,
   getReimbursementTimeline,
+  rejectReimbursement,
 } from '../services/api';
-import { Reimbursement, ReimbursementStatus } from '../types/invoice';
+import { InvoiceStatus, Reimbursement, ReimbursementStatus } from '../types/invoice';
+
+type InvoiceReviewLevel = 'normal' | 'voucher_review' | 'blocked';
+
+type InvoiceReviewMeta = {
+  level: InvoiceReviewLevel;
+  label: string;
+  color: string;
+  description: string;
+  selectionCount: number;
+  blockedCount: number;
+  invoiceCount: number;
+};
+
+const statusColorMap: Record<string, string> = {
+  [ReimbursementStatus.DRAFT]: 'default',
+  [ReimbursementStatus.SUBMITTED]: 'warning',
+  [ReimbursementStatus.APPROVED]: 'success',
+  [ReimbursementStatus.REJECTED]: 'error',
+  [ReimbursementStatus.COMPLETED]: 'processing',
+};
+
+const formatCurrency = (value?: number | null) => `¥${Number(value || 0).toFixed(2)}`;
+
+const isHighRisk = (risk?: string | null) => {
+  if (!risk) return false;
+  const text = String(risk).toLowerCase();
+  return text.includes('高') || text.includes('high') || text.includes('严重');
+};
+
+const getInvoiceReviewMeta = (reimb: Reimbursement): InvoiceReviewMeta => {
+  const invoices = reimb.invoices || [];
+  const blockedInvoices = invoices.filter(
+    (invoice) =>
+      invoice.status === InvoiceStatus.PENDING_RECHECK || invoice.confirmation_mode === 'USER_EDIT',
+  );
+  const selectionInvoices = invoices.filter(
+    (invoice) =>
+      invoice.status === InvoiceStatus.PENDING_VOUCHER_REVIEW ||
+      invoice.confirmation_mode === 'USER_SELECTION',
+  );
+
+  if (blockedInvoices.length > 0) {
+    return {
+      level: 'blocked',
+      label: '阻断异常',
+      color: 'error',
+      description: `含 ${blockedInvoices.length} 张待重审发票`,
+      selectionCount: selectionInvoices.length,
+      blockedCount: blockedInvoices.length,
+      invoiceCount: invoices.length,
+    };
+  }
+
+  if (selectionInvoices.length > 0) {
+    return {
+      level: 'voucher_review',
+      label: '待随单审核',
+      color: 'gold',
+      description: `${selectionInvoices.length} 张发票含人工确认`,
+      selectionCount: selectionInvoices.length,
+      blockedCount: 0,
+      invoiceCount: invoices.length,
+    };
+  }
+
+  return {
+    level: 'normal',
+    label: '正常',
+    color: 'success',
+    description: invoices.length > 0 ? '关联发票均为自动确认' : '暂无关联发票',
+    selectionCount: 0,
+    blockedCount: 0,
+    invoiceCount: invoices.length,
+  };
+};
 
 const ReimbursementListPage: React.FC = () => {
   const navigate = useNavigate();
   const [data, setData] = useState<Reimbursement[]>([]);
   const [loading, setLoading] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // AI 审查相关状态
+  const [keyword, setKeyword] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [invoiceReviewFilter, setInvoiceReviewFilter] = useState<string>('ALL');
+  const [aiRiskFilter, setAiRiskFilter] = useState<string>('ALL');
+
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+
   const [aiCheckVisible, setAiCheckVisible] = useState(false);
   const [aiCheckReimbId, setAiCheckReimbId] = useState<number | null>(null);
   const [aiCheckResult, setAiCheckResult] = useState<any>(null);
   const [aiCheckLoading, setAiCheckLoading] = useState(false);
   const [approveComment, setApproveComment] = useState('');
-  // 🚀 useRef 缓存：React 状态可能被覆盖，但 ref 永不失忆
   const aiResultCache = useRef<Record<number, any>>({});
-
-  // 当前登录用户信息
-  const [currentUser, setCurrentUser] = useState<any>(null);
-
-  // 批处理引擎相关状态
-  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  const [batchLoading, setBatchLoading] = useState(false);
 
   useEffect(() => {
     const userStr = localStorage.getItem('currentUser');
@@ -60,7 +152,7 @@ const ReimbursementListPage: React.FC = () => {
       const res = await getReimbursements();
       setData(res);
       if (!silent) setSelectedRowKeys([]);
-    } catch (error) {
+    } catch {
       if (!silent) message.error('获取报销单列表失败');
     } finally {
       if (!silent) setLoading(false);
@@ -73,26 +165,65 @@ const ReimbursementListPage: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
+  const filteredData = useMemo(() => {
+    return data.filter((record) => {
+      const reviewMeta = getInvoiceReviewMeta(record);
+      const keywordMatched =
+        !keyword.trim() ||
+        [record.id, record.title, record.submitter, record.project_code]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(keyword.trim().toLowerCase()));
+
+      const statusMatched = statusFilter === 'ALL' || record.status === statusFilter;
+
+      const reviewMatched =
+        invoiceReviewFilter === 'ALL' ||
+        (invoiceReviewFilter === 'NORMAL' && reviewMeta.level === 'normal') ||
+        (invoiceReviewFilter === 'VOUCHER' && reviewMeta.level === 'voucher_review') ||
+        (invoiceReviewFilter === 'BLOCKED' && reviewMeta.level === 'blocked');
+
+      const aiMatched =
+        aiRiskFilter === 'ALL' ||
+        (aiRiskFilter === 'HIGH' && isHighRisk(record.ai_risk_level)) ||
+        (aiRiskFilter === 'LOW' && !isHighRisk(record.ai_risk_level));
+
+      return keywordMatched && statusMatched && reviewMatched && aiMatched;
+    });
+  }, [aiRiskFilter, data, invoiceReviewFilter, keyword, statusFilter]);
+
+  const dashboardStats = useMemo(() => {
+    const pending = data.filter((item) => item.status === ReimbursementStatus.SUBMITTED);
+    const voucherReview = data.filter((item) => getInvoiceReviewMeta(item).level === 'voucher_review');
+    const blocked = data.filter((item) => getInvoiceReviewMeta(item).level === 'blocked');
+    const highRisk = data.filter((item) => isHighRisk(item.ai_risk_level));
+
+    return {
+      pendingCount: pending.length,
+      voucherReviewCount: voucherReview.length,
+      blockedCount: blocked.length,
+      highRiskCount: highRisk.length,
+      pendingAmount: pending.reduce((sum, item) => sum + Number(item.total_amount || 0), 0),
+    };
+  }, [data]);
+
   const handleDelete = async (id: number) => {
     try {
       await deleteReimbursement(id);
-      message.success('报销单已撤销，发票已释放！');
+      message.success('报销单已撤销，关联发票已释放');
       fetchData();
-    } catch (error) {
-      message.error('删除失败，请重试');
+    } catch {
+      message.error('撤销失败，请重试');
     }
   };
 
-  // 打开 AI 审查抽屉（useRef 缓存 + data 兜底，绝不丢数据）
   const handleOpenAiCheck = (id: number) => {
     setApproveComment('');
     if (id !== aiCheckReimbId) {
-      // 优先从 ref 缓存取（刚审查完的结果），其次从 data 取（历史持久化结果）
       const cached = aiResultCache.current[id];
       if (cached) {
         setAiCheckResult(cached);
       } else {
-        const record = data.find(item => item.id === id);
+        const record = data.find((item) => item.id === id);
         setAiCheckResult(record?.ai_review_detail ?? null);
       }
       setAiCheckReimbId(id);
@@ -100,65 +231,47 @@ const ReimbursementListPage: React.FC = () => {
     setAiCheckVisible(true);
   };
 
-  // 执行单次 AI 审查
   const handleRunAiCheck = async () => {
     if (!aiCheckReimbId) return;
     setAiCheckLoading(true);
     try {
       const res = await aiCheckReimbursement(aiCheckReimbId);
       setAiCheckResult(res);
-      // 三重保险：state + data + ref，关闭重开绝不丢失
       aiResultCache.current[aiCheckReimbId] = res;
-      setData(prev => prev.map(item =>
-        item.id === aiCheckReimbId
-          ? { ...item, ai_risk_level: res.risk_level, ai_reason: res.reason, ai_review_detail: res }
-          : item
-      ));
+      setData((prev) =>
+        prev.map((item) =>
+          item.id === aiCheckReimbId
+            ? { ...item, ai_risk_level: res.risk_level, ai_reason: res.reason, ai_review_detail: res }
+            : item,
+        ),
+      );
       message.success('AI 审查完成');
     } catch (e: any) {
-      message.error('AI 审查失败：' + (e.response?.data?.detail || e.message));
+      message.error(`AI 审查失败：${e.response?.data?.detail || e.message}`);
     } finally {
       setAiCheckLoading(false);
     }
   };
 
-  // 🚀 批量并发 AI 审查引擎 (带统计汇总 + 确认弹窗)
   const handleBatchAiCheck = () => {
     Modal.confirm({
-      title: '批量 AI 探针扫描',
-      content: `即将对选中的 ${selectedRowKeys.length} 笔报销单并发执行 AI 合规审查。审查完成后可在每笔单据的「AI 智能审批」中查看完整报告。`,
-      okText: '启动并发扫描',
+      title: '批量 AI 合规扫描',
+      content: `即将对选中的 ${selectedRowKeys.length} 笔报销单执行 AI 审查。`,
+      okText: '开始扫描',
       cancelText: '取消',
       onOk: async () => {
         setBatchLoading(true);
         try {
           const ids = selectedRowKeys as number[];
-          const results = await Promise.all(
-            ids.map(id => aiCheckReimbursement(id))
-          );
-          // 批量结果也同步写入 ref 缓存，点「AI 智能审批」即可看完整明细
-          results.forEach((res, i) => {
-            aiResultCache.current[ids[i]] = res;
+          const results = await Promise.all(ids.map((id) => aiCheckReimbursement(id)));
+          results.forEach((res, index) => {
+            aiResultCache.current[ids[index]] = res;
           });
-
-          let highRiskCount = 0;
-          let lowRiskCount = 0;
-          results.forEach(res => {
-            if (res.risk_level?.includes('高') || res.risk_level?.includes('危')) {
-              highRiskCount++;
-            } else {
-              lowRiskCount++;
-            }
-          });
-
-          message.success(
-            `并发扫描完成！排查 ${results.length} 单：${highRiskCount} 笔高风险，${lowRiskCount} 笔低风险。点击各单据「AI 智能审批」查看完整明细报告。`,
-            6
-          );
+          message.success(`批量扫描完成，共处理 ${results.length} 笔报销单`);
           setSelectedRowKeys([]);
           fetchData();
-        } catch (e: any) {
-          message.error('批量审查过程中出现异常，请检查网络');
+        } catch {
+          message.error('批量审查过程中发生异常');
         } finally {
           setBatchLoading(false);
         }
@@ -166,42 +279,46 @@ const ReimbursementListPage: React.FC = () => {
     });
   };
 
-  // 🚀 批量审批通过引擎（带确认弹窗）
   const handleBatchApprove = () => {
-    // 检查高危项
-    const selected = data.filter(item => selectedRowKeys.includes(item.id));
-    const highRiskItems = selected.filter(item => {
-      const risk = String(item.ai_risk_level || '');
-      return risk.includes('高') || risk.includes('危');
-    });
-
-    const content = (
-      <div>
-        <p>确定要一次性通过选中的 <strong>{selectedRowKeys.length}</strong> 笔报销单吗？</p>
-        {highRiskItems.length > 0 && (
-          <Alert type="error" showIcon style={{ marginTop: 12 }}
-            message={`⚠️ 其中 ${highRiskItems.length} 笔为 AI 判定高风险！`}
-            description={highRiskItems.map(r => `#${r.id} ${r.title} — ${r.ai_risk_level}`).join('，')} />
-        )}
-      </div>
-    );
+    const selected = data.filter((item) => selectedRowKeys.includes(item.id));
+    const reviewRiskItems = selected.filter((item) => getInvoiceReviewMeta(item).level !== 'normal');
+    const highRiskItems = selected.filter((item) => isHighRisk(item.ai_risk_level));
 
     Modal.confirm({
-      title: highRiskItems.length > 0 ? '⚠️ 批量审批通过（含高危项）' : '批量审批通过',
-      content,
-      okText: '一键审批通过',
+      title: '批量审批通过',
+      content: (
+        <div>
+          <p>确定要通过选中的 {selectedRowKeys.length} 笔报销单吗？</p>
+          {reviewRiskItems.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`其中 ${reviewRiskItems.length} 笔含随单复核风险`}
+            />
+          )}
+          {highRiskItems.length > 0 && (
+            <Alert
+              type="error"
+              showIcon
+              message={`其中 ${highRiskItems.length} 笔为 AI 高风险`}
+            />
+          )}
+        </div>
+      ),
+      okText: '确认通过',
       cancelText: '取消',
-      okButtonProps: { style: { background: '#E42313', borderColor: '#E42313' } },
+      okButtonProps: { style: { background: '#1677ff', borderColor: '#1677ff' } },
       onOk: async () => {
         setBatchLoading(true);
         try {
           await Promise.all(
-            selectedRowKeys.map(id => approveReimbursement(id as number, "财务批量审批通过"))
+            selectedRowKeys.map((id) => approveReimbursement(id as number, '财务批量审批通过')),
           );
-          message.success(`打款流水线执行成功！已通过 ${selectedRowKeys.length} 笔报销。`);
+          message.success(`已通过 ${selectedRowKeys.length} 笔报销单`);
           setSelectedRowKeys([]);
           fetchData();
-        } catch (e: any) {
+        } catch {
           message.error('批量审批失败');
         } finally {
           setBatchLoading(false);
@@ -210,24 +327,23 @@ const ReimbursementListPage: React.FC = () => {
     });
   };
 
-  // 🚀 批量驳回引擎
   const handleBatchReject = () => {
     Modal.confirm({
       title: '批量驳回',
-      content: `确定要驳回选中的 ${selectedRowKeys.length} 笔报销单吗？关联发票将被释放回「已确认」状态。`,
-      okText: '一键驳回全部',
+      content: `确定要驳回选中的 ${selectedRowKeys.length} 笔报销单吗？`,
+      okText: '确认驳回',
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
         setBatchLoading(true);
         try {
           await Promise.all(
-            selectedRowKeys.map(id => rejectReimbursement(id as number, "财务批量驳回"))
+            selectedRowKeys.map((id) => rejectReimbursement(id as number, '财务批量驳回')),
           );
-          message.warning(`已驳回 ${selectedRowKeys.length} 笔报销单，关联发票已释放。`);
+          message.warning(`已驳回 ${selectedRowKeys.length} 笔报销单`);
           setSelectedRowKeys([]);
           fetchData();
-        } catch (e: any) {
+        } catch {
           message.error('批量驳回失败');
         } finally {
           setBatchLoading(false);
@@ -236,120 +352,134 @@ const ReimbursementListPage: React.FC = () => {
     });
   };
 
-  const getStatusTag = (status: ReimbursementStatus) => {
-    const statusMap: Record<string, string> = {
-      [ReimbursementStatus.DRAFT]: 'default',
-      [ReimbursementStatus.SUBMITTED]: 'warning',
-      [ReimbursementStatus.APPROVED]: 'success',
-      [ReimbursementStatus.REJECTED]: 'error',
-      [ReimbursementStatus.COMPLETED]: 'processing',
-    };
-    return <Tag color={statusMap[status] || 'default'}>{status}</Tag>;
+  const renderInvoiceReviewTag = (record: Reimbursement) => {
+    const review = getInvoiceReviewMeta(record);
+    return (
+      <Space direction="vertical" size={2}>
+        <Tag color={review.color}>{review.label}</Tag>
+        <span style={{ fontSize: 12, color: '#8c8c8c' }}>{review.description}</span>
+      </Space>
+    );
   };
 
   const columns: ColumnsType<Reimbursement> = [
-    { title: '单号', dataIndex: 'id', key: 'id', width: 80 },
-    { title: '报销事由', dataIndex: 'title', key: 'title' },
-    { title: '项目编号', dataIndex: 'project_code', key: 'project_code', render: (val) => val || '-' },
-    {
-      title: '总金额',
-      dataIndex: 'total_amount',
-      key: 'total_amount',
-      render: (val) => `¥${Number(val).toFixed(2)}`,
-    },
+    { title: '单号', dataIndex: 'id', key: 'id', width: 84 },
+    { title: '报销事由', dataIndex: 'title', key: 'title', ellipsis: true },
     {
       title: '提交人',
       dataIndex: 'submitter',
       key: 'submitter',
-      render: (val) => val || currentUser?.full_name || '未知'
+      width: 110,
+      render: (value) => value || currentUser?.full_name || '-',
+    },
+    {
+      title: '金额',
+      dataIndex: 'total_amount',
+      key: 'total_amount',
+      width: 120,
+      render: (value) => <span style={{ fontWeight: 600 }}>{formatCurrency(value)}</span>,
+    },
+    {
+      title: '关联发票',
+      key: 'invoice_count',
+      width: 120,
+      render: (_, record) => {
+        const meta = getInvoiceReviewMeta(record);
+        return (
+          <Space>
+            <span>{meta.invoiceCount} 张</span>
+            {meta.selectionCount > 0 && <Tag color="gold">人工确认</Tag>}
+          </Space>
+        );
+      },
+    },
+    {
+      title: '发票复核',
+      key: 'invoice_review',
+      width: 180,
+      render: (_, record) => renderInvoiceReviewTag(record),
+    },
+    {
+      title: 'AI 风险',
+      dataIndex: 'ai_risk_level',
+      key: 'ai_risk_level',
+      width: 120,
+      render: (value) => {
+        if (!value) return <span style={{ color: '#bfbfbf' }}>未审查</span>;
+        return <Tag color={isHighRisk(value) ? 'error' : 'success'}>{value}</Tag>;
+      },
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: ReimbursementStatus) => getStatusTag(status),
-    },
-    {
-      title: 'AI风控建议',
-      dataIndex: 'ai_risk_level',
-      key: 'ai_risk_level',
-      render: (val) => {
-        if (!val) return <span style={{color: '#aaa'}}>-</span>;
-        return <Tag color={val.includes('高') || val.includes('危') ? 'error' : 'success'}>{val}</Tag>;
-      }
+      width: 110,
+      render: (status: ReimbursementStatus) => <Tag color={statusColorMap[status] || 'default'}>{status}</Tag>,
     },
     {
       title: '提交时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (val) => new Date(val).toLocaleString(),
+      width: 180,
+      render: (value) => new Date(value).toLocaleString(),
     },
     {
       title: '操作',
       key: 'action',
+      width: 260,
       render: (_, record) => {
         const isOwner = record.submitter === currentUser?.username || !record.submitter;
         const isAdmin = currentUser?.role === 'admin';
+        const review = getInvoiceReviewMeta(record);
+        const actionText =
+          review.level === 'voucher_review'
+            ? '去复核'
+            : review.level === 'blocked'
+              ? '查看异常'
+              : '查看';
 
         return (
-          <Space size="middle">
-            <Button type="link" size="small" icon={<EyeOutlined />}
-              onClick={() => navigate(`/reimbursements/${record.id}`)}>
-              详情
+          <Space size="small" wrap>
+            <Button
+              type="link"
+              size="small"
+              icon={review.level === 'normal' ? <EyeOutlined /> : <WarningOutlined />}
+              onClick={() => navigate(`/reimbursements/${record.id}`)}
+            >
+              {actionText}
             </Button>
+
             {(isAdmin || (isOwner && record.status === ReimbursementStatus.SUBMITTED)) && (
               <Popconfirm
-                title="确定要撤销这个报销单吗？"
-                description="撤销后，包含在内的发票将恢复为可用状态。"
+                title="确定要撤销这张报销单吗？"
+                description="撤销后，关联发票将恢复为可用状态。"
                 onConfirm={() => handleDelete(record.id)}
-                okText="确定撤销"
+                okText="确认撤销"
                 cancelText="取消"
                 okButtonProps={{ danger: true }}
               >
-                <Button type="link" danger size="small">撤销/删除</Button>
+                <Button type="link" danger size="small">
+                  撤销/删除
+                </Button>
               </Popconfirm>
             )}
 
             {record.status === ReimbursementStatus.SUBMITTED && (
               <>
                 {isAdmin ? (
-                  record.ai_risk_level ? (
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<RobotOutlined />}
-                      style={{ color: '#22C55E' }}
-                      onClick={() => {
-                        setAiCheckReimbId(record.id);
-                        if (record.ai_review_detail && record.ai_review_detail.compliance_status) {
-                            setAiCheckResult(record.ai_review_detail);
-                        } else {
-                            setAiCheckResult({
-                                compliance_status: record.ai_risk_level?.includes('高') ? '不合规' : '合规',
-                                risk_level: record.ai_risk_level || '未知',
-                                reason: record.ai_reason || '暂无结论',
-                                details: []
-                            });
-                        }
-                        setApproveComment('');
-                        setAiCheckVisible(true);
-                      }}
-                    >
-                      查看 AI 报告
-                    </Button>
-                  ) : (
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<RobotOutlined />}
-                      style={{ color: '#E42313' }}
-                      onClick={() => handleOpenAiCheck(record.id)}
-                    >
-                      AI 智能审批
-                    </Button>
-                  )
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<RobotOutlined />}
+                    style={{ color: record.ai_risk_level ? '#22c55e' : '#1677ff' }}
+                    onClick={() => handleOpenAiCheck(record.id)}
+                  >
+                    {record.ai_risk_level ? '查看 AI 报告' : 'AI 审查'}
+                  </Button>
                 ) : (
-                  <Button type="link" size="small" disabled icon={<EyeOutlined />}>审批中...</Button>
+                  <Button type="link" size="small" disabled icon={<ClockCircleOutlined />}>
+                    审批中
+                  </Button>
                 )}
               </>
             )}
@@ -357,13 +487,15 @@ const ReimbursementListPage: React.FC = () => {
             {isAdmin && record.status === ReimbursementStatus.APPROVED && (
               <Popconfirm
                 title="确认线下打款"
-                description="系统将模拟银企直联转账，生成银行电子回单。"
+                description="确认后将模拟打款并生成银行回执。"
                 onConfirm={async () => {
                   try {
                     await completeReimbursement(record.id);
-                    message.success('打款成功！银行电子回单已生成');
+                    message.success('打款成功');
                     fetchData();
-                  } catch { message.error('打款失败'); }
+                  } catch {
+                    message.error('打款失败');
+                  }
                 }}
                 okText="确认打款"
                 cancelText="取消"
@@ -384,10 +516,10 @@ const ReimbursementListPage: React.FC = () => {
     },
   ];
 
-  // 资金追踪时间轴展开行组件
   const ExpandedTimelineRow: React.FC<{ record: Reimbursement }> = ({ record }) => {
     const [timeline, setTimeline] = useState<any[]>([]);
     const [timelineLoading, setTimelineLoading] = useState(false);
+    const review = getInvoiceReviewMeta(record);
 
     useEffect(() => {
       let cancelled = false;
@@ -403,40 +535,38 @@ const ReimbursementListPage: React.FC = () => {
         }
       };
       fetchTimeline();
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }, [record.id]);
 
-    const statusColorMap: Record<string, string> = {
-      done: '#22C55E',
-      processing: '#1677ff',
-      pending: '#d9d9d9',
-      error: '#E42313',
-    };
-
-    const statusIconMap: Record<string, React.ReactNode> = {
-      done: <CheckCircleOutlined />,
-      processing: <ClockCircleOutlined />,
-      pending: <ClockCircleOutlined />,
-      error: <CloseCircleOutlined />,
-    };
-
-    if (timelineLoading) return <div style={{ padding: 16, color: '#999' }}>加载资金追踪...</div>;
+    if (timelineLoading) {
+      return <div style={{ padding: 16, color: '#999' }}>加载资金追踪...</div>;
+    }
 
     return (
       <div style={{ padding: '12px 16px', background: '#fafafa', borderRadius: 8 }}>
-        <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>资金追踪时间轴</span>
-          <span style={{ fontSize: 12, color: '#999', fontWeight: 400 }}>— {timeline.length} 个节点</span>
-        </div>
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Tag color={review.color}>{review.label}</Tag>
+          {record.ai_risk_level && <Tag color={isHighRisk(record.ai_risk_level) ? 'error' : 'success'}>{record.ai_risk_level}</Tag>}
+          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{review.description}</span>
+        </Space>
         {timeline.length === 0 ? (
           <span style={{ color: '#999' }}>暂无追踪记录</span>
         ) : (
           <Timeline>
-            {timeline.map((node, idx) => (
+            {timeline.map((node, index) => (
               <Timeline.Item
-                key={idx}
-                color={statusColorMap[node.status] || '#d9d9d9'}
-                dot={statusIconMap[node.status]}
+                key={index}
+                color={
+                  node.status === 'done'
+                    ? '#22c55e'
+                    : node.status === 'processing'
+                      ? '#1677ff'
+                      : node.status === 'error'
+                        ? '#ff4d4f'
+                        : '#d9d9d9'
+                }
               >
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{node.title}</div>
                 <div style={{ color: '#666', fontSize: 12, marginTop: 2 }}>
@@ -451,100 +581,198 @@ const ReimbursementListPage: React.FC = () => {
     );
   };
 
-  const expandedRowRender = (record: Reimbursement) => <ExpandedTimelineRow record={record} />;
-
-  const rowSelection = currentUser?.role === 'admin' ? {
-    selectedRowKeys,
-    onChange: (newSelectedRowKeys: React.Key[]) => {
-      setSelectedRowKeys(newSelectedRowKeys);
-    },
-    getCheckboxProps: (record: Reimbursement) => ({
-      disabled: record.status !== ReimbursementStatus.SUBMITTED,
-      name: record.title,
-    }),
-  } : undefined;
+  const rowSelection =
+    currentUser?.role === 'admin'
+      ? {
+          selectedRowKeys,
+          onChange: (newSelectedRowKeys: React.Key[]) => {
+            setSelectedRowKeys(newSelectedRowKeys);
+          },
+          getCheckboxProps: (record: Reimbursement) => ({
+            disabled: record.status !== ReimbursementStatus.SUBMITTED,
+            name: record.title,
+          }),
+        }
+      : undefined;
 
   return (
     <>
-      <Card title="报销单台账" style={{ margin: '24px' }}
+      <Card
+        title="报销审批台账"
+        style={{ margin: '24px' }}
         extra={
-          <Button icon={<DownloadOutlined />} onClick={async () => {
-            try {
-              const token = localStorage.getItem('sessionToken');
-              const res = await fetch('/api/reimbursements/export/excel', {
-                headers: { 'X-Session-Token': token || '' },
-              });
-              if (!res.ok) throw new Error();
-              const blob = await res.blob();
-              const url = window.URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = '报销单台账.xlsx';
-              a.click();
-              window.URL.revokeObjectURL(url);
-            } catch { message.error('导出失败'); }
-          }}>
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={async () => {
+              try {
+                const token = localStorage.getItem('sessionToken');
+                const res = await fetch('/api/reimbursements/export/excel', {
+                  headers: { 'X-Session-Token': token || '' },
+                });
+                if (!res.ok) throw new Error();
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = '报销单台账.xlsx';
+                a.click();
+                window.URL.revokeObjectURL(url);
+              } catch {
+                message.error('导出失败');
+              }
+            }}
+          >
             导出 Excel
           </Button>
-        }>
+        }
+      >
+        <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+          <Col xs={24} md={12} xl={6}>
+            <Card size="small">
+              <div style={{ color: '#8c8c8c', marginBottom: 8 }}>待审批报销单</div>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>{dashboardStats.pendingCount}</div>
+            </Card>
+          </Col>
+          <Col xs={24} md={12} xl={6}>
+            <Card size="small">
+              <div style={{ color: '#8c8c8c', marginBottom: 8 }}>含随单复核发票</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#d48806' }}>{dashboardStats.voucherReviewCount}</div>
+            </Card>
+          </Col>
+          <Col xs={24} md={12} xl={6}>
+            <Card size="small">
+              <div style={{ color: '#8c8c8c', marginBottom: 8 }}>阻断异常单据</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#cf1322' }}>{dashboardStats.blockedCount}</div>
+            </Card>
+          </Col>
+          <Col xs={24} md={12} xl={6}>
+            <Card size="small">
+              <div style={{ color: '#8c8c8c', marginBottom: 8 }}>待处理金额</div>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>{formatCurrency(dashboardStats.pendingAmount)}</div>
+            </Card>
+          </Col>
+        </Row>
+
+        <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+          <Row gutter={[12, 12]} align="middle">
+            <Col xs={24} md={10} xl={8}>
+              <Input
+                allowClear
+                prefix={<SearchOutlined />}
+                placeholder="搜索单号、报销事由、提交人、项目编号"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={7} xl={5}>
+              <Select
+                value={statusFilter}
+                onChange={setStatusFilter}
+                style={{ width: '100%' }}
+                options={[
+                  { value: 'ALL', label: '全部状态' },
+                  { value: ReimbursementStatus.SUBMITTED, label: '待审批' },
+                  { value: ReimbursementStatus.APPROVED, label: '已通过' },
+                  { value: ReimbursementStatus.COMPLETED, label: '已打款' },
+                  { value: ReimbursementStatus.REJECTED, label: '已驳回' },
+                ]}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={7} xl={5}>
+              <Select
+                value={invoiceReviewFilter}
+                onChange={setInvoiceReviewFilter}
+                style={{ width: '100%' }}
+                options={[
+                  { value: 'ALL', label: '全部发票复核' },
+                  { value: 'NORMAL', label: '正常' },
+                  { value: 'VOUCHER', label: '待随单审核' },
+                  { value: 'BLOCKED', label: '阻断异常' },
+                ]}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={7} xl={4}>
+              <Select
+                value={aiRiskFilter}
+                onChange={setAiRiskFilter}
+                style={{ width: '100%' }}
+                options={[
+                  { value: 'ALL', label: '全部 AI 风险' },
+                  { value: 'HIGH', label: '高风险' },
+                  { value: 'LOW', label: '低/未审查' },
+                ]}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={3} xl={2}>
+              <Space style={{ color: '#8c8c8c' }}>
+                <FilterOutlined />
+                <span>{filteredData.length} 笔</span>
+              </Space>
+            </Col>
+          </Row>
+        </Card>
 
         {selectedRowKeys.length > 0 && (
-          <div style={{
-            marginBottom: 16,
-            padding: '14px 24px',
-            background: 'linear-gradient(135deg, #fff2f0 0%, #fff7f7 100%)',
-            border: '2px solid #E42313',
-            borderRadius: 10,
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            boxShadow: '0 4px 16px rgba(228, 35, 19, 0.15)'
-          }}>
+          <div
+            style={{
+              marginBottom: 16,
+              padding: '14px 20px',
+              background: '#fff7e6',
+              border: '1px solid #ffd591',
+              borderRadius: 10,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
             <div>
-              <span style={{ fontSize: 15, fontWeight: 600, color: '#333' }}>
-                已勾选 <strong style={{ color: '#E42313', fontSize: 20, margin: '0 2px' }}>{selectedRowKeys.length}</strong> 笔待审批单据
+              <span style={{ fontSize: 15, fontWeight: 600 }}>
+                已选中 {selectedRowKeys.length} 笔待审批报销单
               </span>
-              <span style={{ color: '#999', marginLeft: 12, fontSize: 13 }}>
-                · 并发批处理引擎就绪
-              </span>
+              <div style={{ color: '#8c8c8c', fontSize: 12, marginTop: 4 }}>
+                建议先批量 AI 审查，再执行批量审批
+              </div>
             </div>
-            <Space size="middle">
-              <Button
-                loading={batchLoading}
-                icon={<RobotOutlined />}
-                onClick={handleBatchAiCheck}
-                style={{ color: '#E42313', borderColor: '#E42313', fontWeight: 500 }}
-              >
-                AI 批量探针扫描
+            <Space wrap>
+              <Button loading={batchLoading} icon={<RobotOutlined />} onClick={handleBatchAiCheck}>
+                AI 批量审查
               </Button>
               <Button
                 type="primary"
                 loading={batchLoading}
                 icon={<ThunderboltOutlined />}
                 onClick={handleBatchApprove}
-                style={{ background: '#E42313', borderColor: '#E42313', fontWeight: 600 }}
+                style={{ background: '#1677ff', borderColor: '#1677ff' }}
               >
-                一键批量通过
+                批量通过
               </Button>
-              <Button
-                danger
-                loading={batchLoading}
-                icon={<CloseCircleOutlined />}
-                onClick={handleBatchReject}
-              >
+              <Button danger loading={batchLoading} icon={<CloseCircleOutlined />} onClick={handleBatchReject}>
                 批量驳回
               </Button>
             </Space>
           </div>
         )}
 
+        {dashboardStats.blockedCount > 0 && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`当前台账中发现 ${dashboardStats.blockedCount} 笔阻断异常单据`}
+            description="这类单据理论上不应进入正常审批流，建议优先进入详情页核查关联发票状态。"
+          />
+        )}
+
         <Table
           rowSelection={rowSelection}
           columns={columns}
-          dataSource={data}
+          dataSource={filteredData}
           rowKey="id"
           loading={loading}
-          expandable={{ expandedRowRender }}
+          expandable={{ expandedRowRender: (record) => <ExpandedTimelineRow record={record} /> }}
+          pagination={{ pageSize: 10, showSizeChanger: false }}
         />
       </Card>
 
@@ -558,26 +786,18 @@ const ReimbursementListPage: React.FC = () => {
         placement="right"
         width={520}
         open={aiCheckVisible}
-        onClose={() => {
-          setAiCheckVisible(false);
-          // 不在此处刷新列表，避免覆盖掉刚缓存到 data 里的 ai_review_detail
-        }}
+        onClose={() => setAiCheckVisible(false)}
       >
         {!aiCheckResult ? (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <p style={{ color: '#7A7A7A', marginBottom: 24 }}>
-              点击下方按钮，AI 将自动审查该报销单
-            </p>
+            <p style={{ color: '#7a7a7a', marginBottom: 24 }}>点击下方按钮，AI 将对当前报销单执行合规审查。</p>
             <Button
               type="primary"
               size="large"
               icon={<RobotOutlined />}
               loading={aiCheckLoading}
               onClick={handleRunAiCheck}
-              style={{
-                background: '#E42313',
-                borderColor: '#E42313',
-              }}
+              style={{ background: '#1677ff', borderColor: '#1677ff' }}
             >
               启动 AI 审查
             </Button>
@@ -587,29 +807,15 @@ const ReimbursementListPage: React.FC = () => {
             <Card
               style={{
                 marginBottom: 16,
-                borderLeft: `4px solid ${
-                  aiCheckResult.compliance_status === '合规' ? '#22C55E' : '#EF4444'
-                }`,
+                borderLeft: `4px solid ${aiCheckResult.compliance_status === '合规' ? '#22c55e' : '#ef4444'}`,
               }}
             >
               <Space direction="vertical" size="small" style={{ width: '100%' }}>
                 <div>
-                  <Tag
-                    color={aiCheckResult.compliance_status === '合规' ? 'success' : 'error'}
-                    style={{ fontSize: 14, padding: '4px 12px' }}
-                  >
+                  <Tag color={aiCheckResult.compliance_status === '合规' ? 'success' : 'error'}>
                     {aiCheckResult.compliance_status}
                   </Tag>
-                  <Tag
-                    color={
-                      aiCheckResult.risk_level === '高'
-                        ? 'error'
-                        : aiCheckResult.risk_level === '中'
-                        ? 'warning'
-                        : 'success'
-                    }
-                    style={{ fontSize: 14, padding: '4px 12px' }}
-                  >
+                  <Tag color={isHighRisk(aiCheckResult.risk_level) ? 'error' : 'success'}>
                     风险等级：{aiCheckResult.risk_level}
                   </Tag>
                 </div>
@@ -624,14 +830,12 @@ const ReimbursementListPage: React.FC = () => {
 
             {aiCheckResult.details?.length > 0 && (
               <Card title="审查明细" size="small" style={{ marginBottom: 16 }}>
-                {aiCheckResult.details.map((d: any, idx: number) => (
+                {aiCheckResult.details.map((detail: any, index: number) => (
                   <Alert
-                    key={idx}
-                    type={
-                      d.severity === '严重' ? 'error' : d.severity === '中等' ? 'warning' : 'info'
-                    }
-                    message={`[${d.severity}] ${d.issue}`}
-                    description={d.comment}
+                    key={index}
+                    type={detail.severity === '严重' ? 'error' : detail.severity === '中等' ? 'warning' : 'info'}
+                    message={`[${detail.severity}] ${detail.issue}`}
+                    description={detail.comment}
                     showIcon
                     style={{ marginBottom: 8 }}
                   />
@@ -640,71 +844,61 @@ const ReimbursementListPage: React.FC = () => {
             )}
 
             <Divider />
-            <div style={{ marginTop: 16 }}>
-              <Input.TextArea
-                rows={3}
-                placeholder="请输入审批意见..."
-                value={approveComment}
-                onChange={(e) => setApproveComment(e.target.value)}
-                style={{ marginBottom: 12 }}
-              />
-              <Space>
-                <Button
-                  type="primary"
-                  icon={<CheckCircleOutlined />}
-                  style={{ background: '#22C55E', borderColor: '#22C55E' }}
-                  onClick={() => {
-                    // 检查风险项
-                    const riskWarnings: string[] = [];
-                    if (aiCheckResult?.risk_level && (aiCheckResult.risk_level === '高' || aiCheckResult.risk_level === '中')) {
-                      riskWarnings.push(`AI 风险评级：${aiCheckResult.risk_level}风险`);
-                    }
-                    Modal.confirm({
-                      title: riskWarnings.length > 0 ? '⚠️ 确认审批通过（含风险预警）' : '确认审批通过',
-                      content: riskWarnings.length > 0
-                        ? <Alert type="error" showIcon message="以下风险项请仔细确认：" description={riskWarnings.join('\n')} />
-                        : '确定要通过该报销单吗？',
-                      okText: '确认通过',
-                      cancelText: '取消',
-                      okButtonProps: { style: { background: '#22C55E', borderColor: '#22C55E' } },
-                      onOk: async () => {
-                        try {
-                          await approveReimbursement(aiCheckReimbId!, approveComment);
-                          message.success('已审批通过');
-                          setAiCheckVisible(false);
-                          fetchData();
-                        } catch (e: any) {
-                          message.error('操作失败：' + (e.response?.data?.detail || e.message));
-                        }
-                      },
-                    });
-                  }}
-                >
-                  审批通过
-                </Button>
-                <Button
-                  danger
-                  icon={<CloseCircleOutlined />}
-                  onClick={async () => {
-                    if (!approveComment.trim()) {
-                      message.warning('驳回请填写原因');
-                      return;
-                    }
-                    try {
-                      // 🚀 修复 TS 报错：传纯字符串
-                      await rejectReimbursement(aiCheckReimbId!, approveComment);
-                      message.success('已驳回');
-                      setAiCheckVisible(false);
-                      fetchData();
-                    } catch (e: any) {
-                      message.error('操作失败：' + (e.response?.data?.detail || e.message));
-                    }
-                  }}
-                >
-                  驳回
-                </Button>
-              </Space>
-            </div>
+            <Input.TextArea
+              rows={3}
+              placeholder="请输入审批意见"
+              value={approveComment}
+              onChange={(e) => setApproveComment(e.target.value)}
+              style={{ marginBottom: 12 }}
+            />
+            <Space>
+              <Button
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                style={{ background: '#22c55e', borderColor: '#22c55e' }}
+                onClick={() => {
+                  Modal.confirm({
+                    title: '确认审批通过',
+                    content: '确定要通过当前报销单吗？',
+                    okText: '确认通过',
+                    cancelText: '取消',
+                    okButtonProps: { style: { background: '#22c55e', borderColor: '#22c55e' } },
+                    onOk: async () => {
+                      try {
+                        await approveReimbursement(aiCheckReimbId!, approveComment);
+                        message.success('已审批通过');
+                        setAiCheckVisible(false);
+                        fetchData();
+                      } catch (e: any) {
+                        message.error(`操作失败：${e.response?.data?.detail || e.message}`);
+                      }
+                    },
+                  });
+                }}
+              >
+                审批通过
+              </Button>
+              <Button
+                danger
+                icon={<CloseCircleOutlined />}
+                onClick={async () => {
+                  if (!approveComment.trim()) {
+                    message.warning('驳回请填写原因');
+                    return;
+                  }
+                  try {
+                    await rejectReimbursement(aiCheckReimbId!, approveComment);
+                    message.success('已驳回');
+                    setAiCheckVisible(false);
+                    fetchData();
+                  } catch (e: any) {
+                    message.error(`操作失败：${e.response?.data?.detail || e.message}`);
+                  }
+                }}
+              >
+                驳回
+              </Button>
+            </Space>
           </>
         )}
       </Drawer>

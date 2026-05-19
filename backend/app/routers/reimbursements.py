@@ -1,4 +1,7 @@
+import hashlib
+import json
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +14,7 @@ from app.database import get_db
 
 logger = logging.getLogger(__name__)
 from app.models.reimbursement import Reimbursement, ReimbursementStatus
-from app.models.invoice import Invoice, InvoiceStatus
+from app.models.invoice import Invoice, InvoiceStatus, ParsingDiff
 from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
@@ -19,7 +22,15 @@ from app.models.project import Project
 from app.models.application import Application, ApplicationStatus
 from app.models.bank_card import BankCard
 from app.models.transaction import Transaction
-from app.schemas.reimbursement import ReimbursementCreate, ReimbursementResponse, ReimbursementReview, CategorySuggestionRequest, CategorySuggestionResponse
+from app.schemas.reimbursement import (
+    ReimbursementCreate,
+    ReimbursementResponse,
+    ReimbursementReview,
+    CategorySuggestionRequest,
+    CategorySuggestionResponse,
+    VoucherReviewRequest,
+    VoucherReviewResponse,
+)
 from app.services.reimbursement_service import delete_reimbursement_logic
 from app.services.audit_service import log_audit_no_commit, get_client_info
 from app.services.ws_manager import push_notification, push_notification_to_admins
@@ -28,6 +39,60 @@ from app.models.reason_category import ReasonCategory
 from app.dependencies import get_current_user
 
 router = APIRouter()
+
+
+def _serialize_invoice_field(value):
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    return str(value)
+
+
+def _set_invoice_field(invoice: Invoice, field_name: str, raw_value: str):
+    if field_name == "issue_date":
+        invoice.issue_date = datetime.strptime(raw_value, "%Y-%m-%d").date()
+        return
+    if field_name in {"total_with_tax", "amount", "tax_amount"}:
+        setattr(invoice, field_name, Decimal(str(raw_value)))
+        return
+    setattr(invoice, field_name, raw_value)
+
+
+def _rebuild_invoice_hash(invoice: Invoice):
+    raw = json.dumps(
+        {
+            "invoice_number": invoice.invoice_number,
+            "issue_date": str(invoice.issue_date) if invoice.issue_date else None,
+            "total_with_tax": str(invoice.total_with_tax) if invoice.total_with_tax else None,
+            "amount": str(invoice.amount) if invoice.amount else None,
+            "tax_amount": str(invoice.tax_amount) if invoice.tax_amount else None,
+            "buyer_name": invoice.buyer_name,
+            "buyer_tax_id": invoice.buyer_tax_id,
+            "seller_name": invoice.seller_name,
+            "seller_tax_id": invoice.seller_tax_id,
+            "items": json.dumps(invoice.items, ensure_ascii=False) if invoice.items else None,
+            "owner_id": invoice.owner_id,
+            "status": invoice.status.value if invoice.status else None,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    invoice.invoice_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _invoice_needs_voucher_review(invoice: Invoice) -> bool:
+    if invoice.status == InvoiceStatus.PENDING_VOUCHER_REVIEW:
+        return True
+    return invoice.confirmation_mode in {"USER_SELECTION", "ADMIN_CORRECTION"}
+
+
+def _invoice_reviewed(invoice: Invoice) -> bool:
+    trace = invoice.decision_trace or {}
+    review = trace.get("voucher_review") or {}
+    return bool(review.get("reviewed"))
 
 
 @router.post("/category-suggestion", response_model=CategorySuggestionResponse)
@@ -196,6 +261,11 @@ async def create_reimbursement(
         # 防止拿别人的发票报销
         if inv.owner_id and inv.owner_id != current_user["id"]:
             raise HTTPException(status_code=403, detail=f"发票 {inv.invoice_number or inv.id} 不属于您，无法报销")
+        # 确认流门禁：待重审必须先管理员复核；已确认和待随单审核可进报销单
+        if inv.status == InvoiceStatus.PENDING_RECHECK:
+            raise HTTPException(status_code=400, detail=f"发票 {inv.invoice_number or inv.id} 处于待重审，暂不可报销")
+        if inv.status not in [InvoiceStatus.CONFIRMED, InvoiceStatus.PENDING_VOUCHER_REVIEW]:
+            raise HTTPException(status_code=400, detail=f"发票 {inv.invoice_number or inv.id} 状态不支持报销")
         # 防止同一张发票重复打包
         if inv.reimbursement_id is not None:
             raise HTTPException(status_code=400, detail=f"发票 {inv.invoice_number or inv.id} 已被其他报销单占用")
@@ -577,8 +647,29 @@ async def ai_check_reimbursement(
     }, db)
 
     if action == "AUTO_APPROVE":
+        # 随单审核门禁：有发票需人工复核则阻止自动通过
+        needs_voucher_review = any(
+            _invoice_needs_voucher_review(inv) for inv in reimb.invoices
+        )
+        if needs_voucher_review:
+            result_dict["auto_approve_blocked"] = True
+            result_dict["auto_approve_block_reason"] = (
+                "该报销单满足自动审批条件，但因包含需随单审核的发票字段"
+                "（用户选择了非默认字段值或进行了手动修正），已转为人工审批"
+            )
+            reimb.ai_reason = json.dumps(result_dict, ensure_ascii=False)
+            await db.commit()
+            await push_notification_to_admins(
+                db,
+                title="报销单需人工审批",
+                message=f"「{reimb.title}」¥{float(reimb.total_amount or 0):.2f} AI审查合规，但因含需随单审核的发票，已阻止自动通过，请前往审批。",
+                entity_type="reimbursement", entity_id=reimb.id,
+            )
+            return result_dict
+
+        # 无随单审核需求，正常自动通过
         reimb.status = ReimbursementStatus.APPROVED
-        reimb.reviewer = "AI规则引擎"  # 标记非人工审批
+        reimb.reviewer = "AI规则引擎"
         for inv in reimb.invoices:
             inv.status = InvoiceStatus.REIMBURSED
         if reimb.submitter_id:
@@ -592,6 +683,141 @@ async def ai_check_reimbursement(
         await db.refresh(reimb)
 
     return result_dict
+
+
+@router.put("/{reimb_id}/invoices/{invoice_id}/voucher-review", response_model=VoucherReviewResponse)
+async def review_reimbursement_invoice(
+    reimb_id: int,
+    invoice_id: int,
+    body: VoucherReviewRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """管理员在报销单随单审核中直接复核并代修正发票。"""
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可操作")
+
+    reimb_query = select(Reimbursement).options(selectinload(Reimbursement.invoices)).where(
+        Reimbursement.id == reimb_id
+    )
+    reimb_result = await db.execute(reimb_query)
+    reimb = reimb_result.scalar_one_or_none()
+
+    if not reimb:
+        raise HTTPException(status_code=404, detail="报销单不存在")
+    if reimb.status != ReimbursementStatus.SUBMITTED:
+        raise HTTPException(status_code=400, detail="仅待审批报销单支持随单复核")
+
+    invoice = next((inv for inv in reimb.invoices if inv.id == invoice_id), None)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="该发票不属于当前报销单")
+
+    diff_rows = (
+        await db.execute(select(ParsingDiff).where(ParsingDiff.invoice_id == invoice_id))
+    ).scalars().all()
+    parsing_diffs = {diff.field_name: diff for diff in diff_rows}
+
+    field_states = invoice.field_states or {}
+    corrected_fields: List[str] = []
+    admin_changes: List[dict] = []
+
+    for update in body.field_updates:
+        if update.source not in {"ocr", "llm", "custom"}:
+            raise HTTPException(status_code=400, detail=f"字段 {update.field_name} 的来源无效")
+        if update.source == "custom" and (update.value is None or str(update.value).strip() == ""):
+            raise HTTPException(status_code=400, detail=f"字段 {update.field_name} 的自定义值不能为空")
+
+        diff = parsing_diffs.get(update.field_name)
+        if not diff:
+            raise HTTPException(status_code=400, detail=f"字段 {update.field_name} 不在当前发票复核范围内")
+
+        if update.source == "ocr":
+            final_value = diff.ocr_value
+        elif update.source == "llm":
+            final_value = diff.llm_value
+        else:
+            final_value = update.value
+
+        if final_value is None or str(final_value).strip() == "":
+            raise HTTPException(status_code=400, detail=f"字段 {update.field_name} 的目标值为空，无法保存")
+
+        old_value = _serialize_invoice_field(getattr(invoice, update.field_name, None))
+        try:
+            _set_invoice_field(invoice, update.field_name, str(final_value))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"字段 {update.field_name} 的值格式不正确") from exc
+
+        diff.final_value = str(final_value)
+        diff.source = update.source
+        diff.resolved = 1
+
+        new_value = _serialize_invoice_field(getattr(invoice, update.field_name, None))
+        if old_value != new_value:
+            corrected_fields.append(update.field_name)
+
+        state = field_states.get(update.field_name, {})
+        state["reviewed_value"] = new_value
+        state["reviewed_by"] = current_user.get("username")
+        state["reviewed_at"] = datetime.now().isoformat()
+        field_states[update.field_name] = state
+
+        admin_changes.append(
+            {
+                "field_name": update.field_name,
+                "label": state.get("label") or update.field_name,
+                "old_value": old_value,
+                "new_value": new_value,
+                "source": update.source,
+            }
+        )
+
+    trace = invoice.decision_trace or {}
+    existing_changes = trace.get("admin_corrections") or []
+    trace["admin_corrections"] = existing_changes + admin_changes
+    trace["voucher_review"] = {
+        "reviewed": body.mark_reviewed,
+        "reviewed_by": current_user.get("username"),
+        "reviewed_at": datetime.now().isoformat(),
+        "review_note": body.review_note or "",
+        "reviewed_fields": admin_changes,
+    }
+    trace["last_admin_action"] = "correct" if corrected_fields else "confirm"
+
+    invoice.field_states = field_states
+    invoice.decision_trace = trace
+    if corrected_fields:
+        invoice.confirmation_mode = "ADMIN_CORRECTION"
+
+    _rebuild_invoice_hash(invoice)
+
+    client_info = get_client_info(request)
+    await log_audit_no_commit(
+        db=db,
+        entity_type="invoice",
+        entity_id=invoice_id,
+        action="voucher_review",
+        new_value={
+            "reimbursement_id": reimb_id,
+            "reviewed": body.mark_reviewed,
+            "corrected_fields": corrected_fields,
+            "confirmation_mode": invoice.confirmation_mode or "USER_SELECTION",
+            "review_note": body.review_note or "",
+        },
+        ip_address=client_info.get("ip_address"),
+        user_agent=client_info.get("user_agent"),
+    )
+
+    await db.commit()
+
+    return VoucherReviewResponse(
+        reimbursement_id=reimb_id,
+        invoice_id=invoice_id,
+        reviewed=body.mark_reviewed,
+        corrected_fields=corrected_fields,
+        confirmation_mode=invoice.confirmation_mode or "USER_SELECTION",
+        message="该票随单复核已保存" if not corrected_fields else "管理员修正已保存",
+    )
 
 
 # ============================================================
@@ -619,6 +845,17 @@ async def approve_reimbursement(
         raise HTTPException(status_code=404, detail="报销单不存在")
     if reimb.status != ReimbursementStatus.SUBMITTED:
         raise HTTPException(status_code=400, detail="只能审批状态为「待审批」的报销单")
+
+    unreviewed_invoices = [
+        inv.invoice_number or str(inv.id)
+        for inv in reimb.invoices
+        if _invoice_needs_voucher_review(inv) and not _invoice_reviewed(inv)
+    ]
+    if unreviewed_invoices:
+        raise HTTPException(
+            status_code=400,
+            detail=f"仍有发票未完成随单复核：{', '.join(unreviewed_invoices)}",
+        )
 
     reimb.status = ReimbursementStatus.APPROVED
     reimb.reviewer = body.get("reviewer", "系统")
@@ -1053,6 +1290,9 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     ai_reject_count = 0
 
     for r in reimbs:
+        # 月度趋势只统计已通过/已打款的报销，与 KPI 卡片口径一致
+        if r.status not in (ReimbursementStatus.APPROVED, ReimbursementStatus.COMPLETED):
+            continue
         dept = r.project_code or '通用部门'
 
         # ==========================================

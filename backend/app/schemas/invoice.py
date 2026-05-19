@@ -12,6 +12,7 @@ class InvoiceStatus(str, Enum):
     REVIEWING = "待确认"
     CONFIRMED = "已确认"
     PENDING_RECHECK = "待重审"
+    PENDING_VOUCHER_REVIEW = "待随单审核"
     REIMBURSED = "已报销"
     NOT_REIMBURSED = "未报销"
 
@@ -51,6 +52,9 @@ class InvoiceBase(BaseModel):
     # 发票确认流程：字段级状态
     field_states: Optional[Dict[str, Any]] = Field(None, description="字段确认状态快照")
     user_corrections: Optional[Dict[str, Any]] = Field(None, description="用户修正记录")
+    confirmation_mode: Optional[str] = Field(None, description="AUTO/USER_SELECTION/USER_EDIT")
+    decision_trace: Optional[Dict[str, Any]] = Field(None, description="字段决策轨迹与风险摘要")
+    selection_fields: Optional[List[str]] = Field(None, description="在解析对比区人工选择过的字段列表")
 
 
 class InvoiceCreate(InvoiceBase):
@@ -143,6 +147,11 @@ class ParsingDiffResponse(BaseModel):
     field_name: str
     ocr_value: Optional[str] = None
     llm_value: Optional[str] = None
+    machine_value: Optional[str] = None
+    machine_source: Optional[str] = None
+    machine_confidence: Optional[float] = Field(None, description="机器综合裁决置信度(0.00-1.00)")
+    decision_rule_type: Optional[str] = None
+    decision_reason: Optional[Any] = None
     final_value: Optional[str] = None
     source: Optional[str] = None
     confidence: Optional[float] = Field(None, description="综合融合置信度(0.00-1.00)")
@@ -211,7 +220,13 @@ class ConfirmInvoiceResponse(BaseModel):
     status: str
     has_corrections: bool = False
     corrected_fields: List[str] = []
+    confirmation_mode: str = "AUTO"
+    risk_level: str = "low"
+    requires_voucher_review: bool = False
+    selection_fields: List[str] = []
     message: str
+    next_status_label: str = ""       # 下一状态人话标签
+    workflow_transition: str = ""     # 状态流转说明，如 "REVIEWING→PENDING_VOUCHER_REVIEW"
 
 
 class ResolveDiffRequest(BaseModel):
@@ -300,3 +315,24 @@ class FlowStat(BaseModel):
     avg_total_minutes: float = 0
     # 当前待审批数
     pending_count: int = 0
+
+
+class SubjectReviewApplyRequest(BaseModel):
+    """主体复核整组应用请求"""
+    scheme_key: Optional[str] = None       # 采用某个候选方案
+    mode: Optional[str] = None             # "manual" 手动修正
+    fields: Optional[Dict[str, str]] = None  # mode=manual 时的手动值
+
+
+class SubjectReviewApplyResponse(BaseModel):
+    """主体复核整组应用响应"""
+    invoice_id: int
+    applied: bool = True                    # 主体复核是否已完成
+    applied_mode: str                       # "scheme" | "manual"
+    scheme_key: Optional[str] = None
+    scheme_display_label: Optional[str] = None
+    resolved_fields: List[str] = []         # 已确认的主体字段（必含4个）
+    all_subject_fields_resolved: bool = True
+    next_status: str = ""                   # 当前状态（不在此接口变更）
+    next_status_label: str = ""
+    message: str = ""

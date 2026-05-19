@@ -10,6 +10,7 @@ export enum InvoiceStatus {
   PENDING = '待处理',
   REVIEWING = '待确认',
   CONFIRMED = '已确认',
+  PENDING_VOUCHER_REVIEW = '待随单审核',
   PENDING_RECHECK = '待重审',
   REIMBURSED = '已报销',
   NOT_REIMBURSED = '未报销',
@@ -49,6 +50,9 @@ export interface Invoice {
   ground_truth: Record<string, any> | null;
   field_states: Record<string, { status: string; label: string; ocr: string | null; llm: string | null; confidence: number }> | null;
   user_corrections: Record<string, string> | null;
+  confirmation_mode: 'AUTO' | 'USER_SELECTION' | 'USER_EDIT' | null;
+  decision_trace: Record<string, any> | null;
+  selection_fields: string[] | null;
   spend_category: string | null;
   carbon_kg: number | null;
   created_at: string;

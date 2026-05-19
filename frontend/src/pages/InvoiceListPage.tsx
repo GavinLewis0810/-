@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+﻿import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -912,11 +912,11 @@ function InvoiceListPage() {
                 <Button icon={<SyncOutlined />} onClick={handleBatchReprocess}>
                   重新解析
                 </Button>
-                <Button danger icon={<DeleteOutlined />} onClick={handleBatchDelete}>
-                  批量删除
-                </Button>
               </>
             )}
+            <Button danger icon={<DeleteOutlined />} onClick={handleBatchDelete}>
+              批量删除
+            </Button>
           </>
         )}
       </div>

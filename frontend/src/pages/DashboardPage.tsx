@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+﻿import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { Row, Col, Card, Statistic, Empty, Tag, List } from 'antd';
 import {
   FileDoneOutlined, AccountBookOutlined, CheckCircleOutlined,
@@ -426,7 +426,7 @@ export default function DashboardPage() {
             <Row gutter={[16, 16]} style={s.sectionRow}>
               <Col span={14}>
                 <Card
-                  title={<span style={{ color: '#fff' }}>🔮 预算耗尽预测（GM(1,1)+Markov 组合模型）</span>}
+                  title={<span style={{ color: '#fff' }}>🔮 预算趋势预警（月累计支出）</span>}
                   style={s.cardBase}
                   styles={{ header: s.cardHead }}
                 >
@@ -453,20 +453,26 @@ export default function DashboardPage() {
                           <Tag color={tagColor} style={{ fontSize: 11 }}>{label}</Tag>
                         </div>
                         <div style={s.warningDetail}>
+                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.42)' }}>
+                            模型: {p.model_label || '趋势估算'} | 口径: 近 {p.window_months || 6} 个月按月累计支出
+                          </div>
                           <div>预算: ¥{Number(p.budget).toLocaleString()} | 已用: ¥{Number(p.spent).toLocaleString()}</div>
                           {p.status !== 'insufficient_data' && p.status !== 'exhausted' && (
                             <>
+                              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)' }}>
+                                {p.prediction_note || '用于预算风险预警，不作为精确承诺日期'}
+                              </div>
                               <div>月均消耗: ¥{Number(p.monthly_burn_rate || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</div>
                               <div style={{ color: p.days_remaining <= 30 ? '#F43F5E' : p.days_remaining <= 90 ? '#F59E0B' : 'rgba(255,255,255,0.6)' }}>
                                 {typeof p.days_remaining === 'number' && p.days_remaining < 9999
-                                  ? `预计 ${p.days_remaining} 天后耗尽 · ${p.predicted_exhaustion_date}`
-                                  : '短期内不会耗尽'}
+                                  ? `参考：预计约 ${p.days_remaining} 天后触及预算上限 · ${p.predicted_exhaustion_date}`
+                                  : '参考：短期内不会触及预算上限'}
                               </div>
                             </>
                           )}
                           {p.status === 'exhausted' && <div style={{ color: '#F43F5E' }}>预算已耗尽！请立即调整支出策略</div>}
-                          {p.status === 'insufficient_data' && <div>数据不足，需要至少3条报销记录才能预测</div>}
-                          {p.gm11_quality != null && p.status !== 'insufficient_data' && (
+                          {p.status === 'insufficient_data' && <div>数据不足，至少需要近几个月的有效支出记录才能做趋势预警</div>}
+                          {p.gm11_quality != null && p.model_type === 'gm_markov' && p.status !== 'insufficient_data' && (
                             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>GM(1,1) 拟合误差: {p.gm11_quality}%</div>
                           )}
                         </div>
